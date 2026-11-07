@@ -1,0 +1,20 @@
+.gradle/
+build/
+local.properties
+# Worker worktrees (issue-N-* branches) live here; cleaned up on PR merge.
+worktrees/
+.idea/
+*.iml
+captures/
+.cxx/
+.kotlin/
+.DS_Store
+*.hprof
+
+# Secrets — never commit. The server token lives only in ~/.config/hush-server.env on the box
+# and in the app's Settings screen on the phone.
+.env
+*.env
+.env.*
+*.keystore
+*.jks

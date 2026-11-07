@@ -1,0 +1,7 @@
+.git
+.gradle
+**/build
+worktrees
+app/build
+*.env
+local.properties

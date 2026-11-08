@@ -162,8 +162,21 @@ class ArchiveRoutesTest {
         for (body in listOf("{not json", """{"device":"x","items":[{"id":1}]}""", """{"items":[]}""")) {
             val response = client.push(body)
             assertEquals(HttpStatusCode.BadRequest, response.status, "body: $body")
-            assertTrue(response.bodyAsText().contains("\"error\""))
+            // Fixed body: the parser's message (which can quote the request) is never echoed.
+            assertEquals("""{"error":"malformed request body"}""", response.bodyAsText(), "body: $body")
         }
+    }
+
+    @Test
+    fun `a non-JSON content type is a 415`() = testApplication {
+        boot()
+        val response = jsonClient().post("/notifications") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Text.Plain)
+            setBody(pushBody(item("n1")))
+        }
+        assertEquals(HttpStatusCode.UnsupportedMediaType, response.status)
+        assertEquals("""{"error":"request body must be application/json"}""", response.bodyAsText())
     }
 
     // ------------------------------------------------------------------ search / paging

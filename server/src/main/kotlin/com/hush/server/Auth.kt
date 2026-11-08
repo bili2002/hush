@@ -3,6 +3,7 @@ package com.hush.server
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.createRouteScopedPlugin
 import io.ktor.server.request.header
+import java.security.MessageDigest
 
 /** Thrown by the gate when no token is configured → 503. The server never serves the archive open. */
 class NotConfigured : RuntimeException("server not configured")
@@ -17,7 +18,7 @@ class Unauthorized : RuntimeException("missing or invalid bearer token")
  *
  * Fail CLOSED: [token] null (HUSH_TOKEN unset/blank) → [NotConfigured] for every request, so the
  * phone sees a distinct 503 ("the server isn't set up") rather than a 401 ("your token is wrong").
- * The compare is constant-time and length-independent: the token is human-managed and may be
+ * The compare is constant-time over SHA-256 digests: the token is human-managed and may be
  * low-entropy, which is exactly where a timing oracle bites.
  */
 fun bearerAuth(token: String?) = createRouteScopedPlugin("HushBearerAuth") {
@@ -36,15 +37,14 @@ internal fun bearerToken(call: ApplicationCall): String? {
     return parts[1].trim().takeIf { it.isNotEmpty() }
 }
 
-/** Compares every byte of the longer input regardless of where the first difference is. */
+/**
+ * Constant-time compare: both sides are hashed to fixed-length SHA-256 digests first, so neither
+ * the length nor the position of the first differing byte leaks through timing, and
+ * [MessageDigest.isEqual] (constant-time for equal-length inputs since JDK 6u17) does the rest.
+ */
 internal fun constantTimeEquals(a: String, b: String): Boolean {
-    val ab = a.toByteArray(Charsets.UTF_8)
-    val bb = b.toByteArray(Charsets.UTF_8)
-    var diff = ab.size xor bb.size
-    for (i in 0 until maxOf(ab.size, bb.size)) {
-        val x = if (i < ab.size) ab[i].toInt() else 0
-        val y = if (i < bb.size) bb[i].toInt() else 0
-        diff = diff or (x xor y)
-    }
-    return diff == 0
+    val sha = MessageDigest.getInstance("SHA-256")
+    val da = sha.digest(a.toByteArray(Charsets.UTF_8))
+    val db = sha.digest(b.toByteArray(Charsets.UTF_8))
+    return MessageDigest.isEqual(da, db)
 }

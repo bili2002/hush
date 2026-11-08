@@ -5,8 +5,13 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.install
 import io.ktor.server.application.log
+import io.ktor.http.ContentType
 import io.ktor.server.plugins.BadRequestException
+import io.ktor.server.plugins.CannotTransformContentToTypeException
+import io.ktor.server.plugins.ContentTransformationException
+import io.ktor.server.plugins.UnsupportedMediaTypeException
 import io.ktor.server.plugins.statuspages.StatusPagesConfig
+import io.ktor.server.request.contentType
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
@@ -36,7 +41,7 @@ fun Route.archiveRoutes(config: ServerConfig, repo: ArchiveRepository, clock: ()
         install(bearerAuth(config.token))
 
         post {
-            val body = call.receive<PushRequest>()
+            val body = call.receiveJson<PushRequest>()
             if (body.items.size > MAX_PUSH_ITEMS) throw BadRequest("too many items: ${body.items.size} > $MAX_PUSH_ITEMS")
             val now = clock()
             val counts = withContext(Dispatchers.IO) { repo.insertAll(body.device, body.items, receivedAt = now) }
@@ -64,6 +69,19 @@ fun Route.archiveRoutes(config: ServerConfig, repo: ArchiveRepository, clock: ()
     }
 }
 
+/**
+ * `receive` with the right failure shape. When the request's content type has no converter, Ktor
+ * throws [CannotTransformContentToTypeException] and the ENGINE's default transformation checker
+ * (BaseApplicationEngine, Plugins phase) answers a bare 415 before StatusPages can see it. Turning
+ * it into [UnsupportedMediaTypeException] here lets [hushErrorPages] answer 415 with a JSON body.
+ */
+private suspend inline fun <reified T : Any> ApplicationCall.receiveJson(): T =
+    try {
+        receive<T>()
+    } catch (e: CannotTransformContentToTypeException) {
+        throw UnsupportedMediaTypeException(runCatching { request.contentType() }.getOrDefault(ContentType.Any))
+    }
+
 private fun ApplicationCall.longParam(name: String): Long? {
     val raw = request.queryParameters[name]?.takeIf { it.isNotBlank() } ?: return null
     return raw.toLongOrNull() ?: throw BadRequest("$name must be an integer")
@@ -80,12 +98,22 @@ fun StatusPagesConfig.hushErrorPages() {
     exception<BadRequest> { call, cause ->
         call.respond(HttpStatusCode.BadRequest, ErrorBody(cause.message ?: "bad request"))
     }
-    // Ktor raises this when the JSON body cannot be parsed into the request type.
-    exception<BadRequestException> { call, cause ->
-        call.respond(HttpStatusCode.BadRequest, ErrorBody("malformed request body: ${cause.cause?.message ?: cause.message ?: "unreadable"}"))
+    // A body we could not read: wrong media type is 415, anything else (unparseable JSON, a
+    // missing required field, an unconvertible type) is one fixed 400. The parser's own message is
+    // not echoed; it can quote the request body.
+    exception<UnsupportedMediaTypeException> { call, _ ->
+        call.respond(HttpStatusCode.UnsupportedMediaType, ErrorBody("request body must be application/json"))
     }
+    exception<BadRequestException> { call, cause -> call.malformedBody(cause) }
+    exception<ContentTransformationException> { call, cause -> call.malformedBody(cause) }
+    // Fixed body on purpose: SQLite messages can carry file paths and SQL. The cause goes to the log.
     exception<Throwable> { call, cause ->
         call.application.log.error("unhandled error on ${call.request.local.uri}", cause)
-        call.respond(HttpStatusCode.InternalServerError, ErrorBody(cause.message ?: "internal error"))
+        call.respond(HttpStatusCode.InternalServerError, ErrorBody("internal error"))
     }
+}
+
+private suspend fun ApplicationCall.malformedBody(cause: Throwable) {
+    application.log.debug("rejected request body on ${request.local.uri}", cause)
+    respond(HttpStatusCode.BadRequest, ErrorBody("malformed request body"))
 }

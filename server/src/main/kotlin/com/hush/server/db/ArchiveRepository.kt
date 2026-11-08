@@ -105,7 +105,7 @@ class ArchiveRepository(private val archive: Archive) {
         event = event, removedReason = removed_reason?.toInt(),
     )
 
-    /** Same column order as the raw SELECT in [page]. */
+    /** POSITIONAL: index N here is column N of the raw SELECT in [page]; change both together. */
     private fun SqlCursor.toItem() = ArchiveItem(
         id = getString(0)!!, device = getString(1)!!, key = getString(2)!!, packageName = getString(3)!!,
         appLabel = getString(4), postTime = getLong(5)!!, title = getString(6), text = getString(7),

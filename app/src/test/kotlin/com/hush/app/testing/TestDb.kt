@@ -9,6 +9,8 @@ import java.time.Clock
 
 /** Fresh in-memory database with the schema applied. */
 fun testDatabase(): HushDatabase {
+    // Registers the driver in the caller's classloader (Robolectric sandbox vs plain JVM).
+    Class.forName("org.sqlite.JDBC")
     val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
     HushDatabase.Schema.create(driver)
     return HushDatabase(driver)

@@ -1,10 +1,6 @@
 package com.hush.app.sync
 
+/** Triggers a sync as soon as the network allows. Bound to [WorkSyncScheduler] in [SyncModule]. */
 interface SyncScheduler {
     fun syncNow()
-}
-
-/** Foundation default: no sync. The Sync issue replaces the binding in [SyncModule]. */
-object NoopSyncScheduler : SyncScheduler {
-    override fun syncNow() = Unit
 }

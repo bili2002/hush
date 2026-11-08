@@ -17,6 +17,9 @@ data class NotificationEvent(
     val event: EventType,
     val removedReason: Int?,
     val held: Boolean,
+    // Stamps are set by markDelivered / markSynced, never by insert; defaults keep construction sites short.
+    val deliveredAt: Long? = null,
+    val syncedAt: Long? = null,
 )
 
 enum class EventType { POSTED, REMOVED }

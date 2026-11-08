@@ -32,3 +32,14 @@ What: `deleteSyncedOlderThan(ts)` deletes only rows with `post_time < ts AND syn
 AND (held = 0 OR delivered_at IS NOT NULL)`.
 Why: "never lose a notification": an unsynced row has not reached the server yet, and a held but
 undelivered row has not reached the owner yet. Neither is ever eligible for local deletion.
+
+**[2026-11-08] `NotificationEvent` carries `deliveredAt` / `syncedAt` (nullable, default null)**
+What: the row type exposes both stamps; they are populated on read and ignored on `insert`
+(which always writes NULL). Construction sites that omit them keep compiling.
+Why: the digest and sync layers need to show "delivered at" / "synced" without a second query.
+
+**[2026-11-08] `IN ?` lists are chunked to 500 inside the repository**
+What: `markSynced` / `markDelivered` split `ids` into chunks of 500 and run them in one
+transaction. Signatures are unchanged; callers may pass any size.
+Why: SQLite on Android < 31 caps a statement at 999 bound variables; a busy hour of held
+notifications or a large sync batch would otherwise throw.

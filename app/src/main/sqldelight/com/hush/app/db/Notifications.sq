@@ -41,7 +41,7 @@ LIMIT :limit;
 
 search:
 SELECT * FROM notification_event
-WHERE (title LIKE '%' || :q || '%' OR text LIKE '%' || :q || '%' OR big_text LIKE '%' || :q || '%')
+WHERE (title LIKE '%' || :q || '%' ESCAPE '\' OR text LIKE '%' || :q || '%' ESCAPE '\' OR big_text LIKE '%' || :q || '%' ESCAPE '\')
   AND (:packageName IS NULL OR package_name = :packageName)
 ORDER BY post_time DESC
 LIMIT :limit;

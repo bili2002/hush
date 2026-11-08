@@ -34,10 +34,38 @@ class NotificationRepositoryTest {
     }
 
     @Test
-    fun `round-trips every field including event type`() = runTest {
+    fun `round-trips every field including event type and stamps`() = runTest {
         val e = event("r", event = EventType.REMOVED, held = true, bigText = "big")
         repo.insert(e)
         assertEquals(e, repo.selectRecent(limit = 1, before = Long.MAX_VALUE).first().single())
+
+        repo.markDelivered(listOf("r"), deliveredAt = 111)
+        repo.markSynced(listOf("r"), syncedAt = 222)
+        assertEquals(
+            e.copy(deliveredAt = 111, syncedAt = 222),
+            repo.selectRecent(limit = 1, before = Long.MAX_VALUE).first().single(),
+        )
+    }
+
+    @Test
+    fun `insert ignores caller-supplied stamps`() = runTest {
+        repo.insert(event("s").copy(deliveredAt = 5, syncedAt = 6))
+        val row = repo.selectRecent(limit = 1, before = Long.MAX_VALUE).first().single()
+        assertEquals(null, row.deliveredAt)
+        assertEquals(null, row.syncedAt)
+    }
+
+    @Test
+    fun `markSynced and markDelivered handle more ids than SQLite's 999 variable cap`() = runTest {
+        val ids = (1..1001).map { "id-$it" }
+        ids.forEachIndexed { i, id -> repo.insert(event(id, postTime = i.toLong(), held = true)) }
+
+        repo.markSynced(ids, syncedAt = 10)
+        repo.markDelivered(ids, deliveredAt = 20)
+
+        assertEquals(0L, repo.countUnsynced().first())
+        assertEquals(0L, repo.countHeld().first())
+        assertEquals(1001, repo.selectHeldBatch(20).size)
     }
 
     @Test
@@ -105,6 +133,19 @@ class NotificationRepositoryTest {
         assertEquals(setOf("t", "x", "b"), repo.search("needle", null, 10).first().map { it.id }.toSet())
         assertEquals(setOf("x", "b"), repo.search("needle", "com.example.beta", 10).first().map { it.id }.toSet())
         assertTrue(repo.search("needle", "com.example.gamma", 10).first().isEmpty())
+    }
+
+    @Test
+    fun `search treats LIKE wildcards and backslash literally`() = runTest {
+        repo.insert(event("pct", title = "100% done", text = "x"))
+        repo.insert(event("under", title = "snake_case", text = "x"))
+        repo.insert(event("slash", title = "C:\\path", text = "x"))
+        repo.insert(event("plain", title = "100 done snakeXcase", text = "x"))
+
+        assertEquals(listOf("pct"), repo.search("100%", null, 10).first().map { it.id })
+        assertEquals(listOf("under"), repo.search("e_c", null, 10).first().map { it.id })
+        assertEquals(listOf("slash"), repo.search("\\p", null, 10).first().map { it.id })
+        assertTrue(repo.search("%", null, 10).first().map { it.id } == listOf("pct"))
     }
 
     @Test

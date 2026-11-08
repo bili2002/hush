@@ -17,10 +17,10 @@ class NotificationRepository @Inject constructor(
     private val db: HushDatabase,
     private val clock: Clock,
 ) {
-    private val q get() = db.notificationsQueries
+    private val queries get() = db.notificationsQueries
 
     suspend fun insert(e: NotificationEvent) = withContext(Dispatchers.IO) {
-        q.insert(
+        queries.insert(
             id = e.id,
             key = e.key,
             package_name = e.packageName,
@@ -42,49 +42,62 @@ class NotificationRepository @Inject constructor(
     }
 
     suspend fun selectHeldUndelivered(): List<NotificationEvent> = withContext(Dispatchers.IO) {
-        q.selectHeldUndelivered().executeAsList().map { it.toEvent() }
+        queries.selectHeldUndelivered().executeAsList().map { it.toEvent() }
     }
 
     suspend fun markDelivered(ids: List<String>, deliveredAt: Long) = withContext(Dispatchers.IO) {
-        if (ids.isNotEmpty()) q.markDelivered(ts = deliveredAt, ids = ids)
+        chunked(ids) { queries.markDelivered(ts = deliveredAt, ids = it) }
     }
 
     suspend fun selectHeldBatch(deliveredAt: Long): List<NotificationEvent> = withContext(Dispatchers.IO) {
-        q.selectHeldBatch(deliveredAt).executeAsList().map { it.toEvent() }
+        queries.selectHeldBatch(deliveredAt).executeAsList().map { it.toEvent() }
     }
 
-    fun countHeld(): Flow<Long> = q.countHeld().asFlow().mapToOne(Dispatchers.IO)
+    fun countHeld(): Flow<Long> = queries.countHeld().asFlow().mapToOne(Dispatchers.IO)
 
-    fun countUnsynced(): Flow<Long> = q.countUnsynced().asFlow().mapToOne(Dispatchers.IO)
+    fun countUnsynced(): Flow<Long> = queries.countUnsynced().asFlow().mapToOne(Dispatchers.IO)
 
     suspend fun selectUnsynced(limit: Int): List<NotificationEvent> = withContext(Dispatchers.IO) {
-        q.selectUnsynced(limit.toLong()).executeAsList().map { it.toEvent() }
+        queries.selectUnsynced(limit.toLong()).executeAsList().map { it.toEvent() }
     }
 
     suspend fun markSynced(ids: List<String>, syncedAt: Long) = withContext(Dispatchers.IO) {
-        if (ids.isNotEmpty()) q.markSynced(ts = syncedAt, ids = ids)
+        chunked(ids) { queries.markSynced(ts = syncedAt, ids = it) }
     }
 
     /** Deletes synced rows older than [ts] that are not held-and-undelivered. Returns the number deleted. */
     suspend fun deleteSyncedOlderThan(ts: Long): Int = withContext(Dispatchers.IO) {
-        q.transactionWithResult {
-            q.deleteSyncedOlderThan(ts)
-            q.changes().executeAsOne().toInt()
+        queries.transactionWithResult {
+            queries.deleteSyncedOlderThan(ts)
+            queries.changes().executeAsOne().toInt()
         }
     }
 
     fun selectRecent(limit: Int, before: Long): Flow<List<NotificationEvent>> =
-        q.selectRecent(before = before, limit = limit.toLong()).asFlow().mapToList(Dispatchers.IO)
+        queries.selectRecent(before = before, limit = limit.toLong()).asFlow().mapToList(Dispatchers.IO)
             .map { rows -> rows.map { it.toEvent() } }
 
+    /** Substring match over title/text/big_text; `%`, `_` and `\` in [q] are matched literally. */
     fun search(q: String, packageName: String?, limit: Int): Flow<List<NotificationEvent>> =
-        this.q.search(q = q, packageName = packageName, limit = limit.toLong()).asFlow().mapToList(Dispatchers.IO)
+        queries.search(q = escapeLike(q), packageName = packageName, limit = limit.toLong()).asFlow().mapToList(Dispatchers.IO)
             .map { rows -> rows.map { it.toEvent() } }
 
     fun selectApps(): Flow<List<AppSummary>> =
-        q.selectApps().asFlow().mapToList(Dispatchers.IO).map { rows ->
+        queries.selectApps().asFlow().mapToList(Dispatchers.IO).map { rows ->
             rows.map { AppSummary(it.package_name, it.app_label, it.count, it.last_seen ?: 0L) }
         }
+
+    /**
+     * Runs [block] over [ids] in chunks inside one transaction. SQLite on Android < 31 caps a
+     * statement at 999 bound variables, so an `IN ?` list must never be passed whole.
+     */
+    private fun chunked(ids: List<String>, block: (List<String>) -> Unit) {
+        if (ids.isEmpty()) return
+        queries.transaction { ids.chunked(IN_CHUNK).forEach(block) }
+    }
+
+    private fun escapeLike(q: String): String =
+        q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
     private fun Notification_event.toEvent() = NotificationEvent(
         id = id,
@@ -103,5 +116,11 @@ class NotificationRepository @Inject constructor(
         event = EventType.valueOf(event),
         removedReason = removed_reason?.toInt(),
         held = held,
+        deliveredAt = delivered_at,
+        syncedAt = synced_at,
     )
+
+    private companion object {
+        const val IN_CHUNK = 500
+    }
 }

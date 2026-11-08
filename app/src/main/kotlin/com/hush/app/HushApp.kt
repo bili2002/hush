@@ -1,6 +1,7 @@
 package com.hush.app
 
 import android.app.Application
+import android.util.Log
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import dagger.hilt.android.HiltAndroidApp
@@ -20,7 +21,10 @@ class HushApp : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
-        initializers.forEach { it.init(this) }
+        // An initializer failure is logged, never fatal: this process also hosts the listener.
+        initializers.forEach { init ->
+            runCatching { init.init(this) }.onFailure { Log.e("HushApp", "AppInitializer ${init.javaClass.name} failed", it) }
+        }
     }
 
     override val workManagerConfiguration: Configuration

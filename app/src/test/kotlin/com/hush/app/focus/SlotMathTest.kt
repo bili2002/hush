@@ -64,10 +64,12 @@ class SlotMathTest {
                 val local = java.time.Instant.ofEpochMilli(next).atZone(sofia)
                 assertEquals(0, local.second)
                 assertEquals(0, (local.hour * 60 + local.minute) % slot, "slot=$slot lands on a wall-clock boundary")
-                assertTrue(next - now <= slot * 60_000L + 60 * 60_000L, "slot=$slot is at most one slot plus the repeated hour away")
+                assertTrue(next - now <= slot * 60_000L, "slot=$slot is at most one slot away even across the repeated hour")
             }
         }
-        // From the second 03:20 the hour slot is 04:00 EET, 40 real minutes later.
+        // From the first 03:20 (EEST) the next hour boundary is the *second* 03:00 (EET), 40 real minutes later.
+        assertEquals(40L * 60_000, nextSlot(firstThree, 60, sofia) - firstThree)
+        // From the second 03:20 (EET) it is 04:00 EET, again 40 minutes later.
         assertEquals(40L * 60_000, nextSlot(secondThree, 60, sofia) - secondThree)
     }
 

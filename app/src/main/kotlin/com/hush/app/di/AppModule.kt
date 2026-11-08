@@ -1,9 +1,10 @@
 package com.hush.app.di
 
 import android.content.Context
-import androidx.datastore.core.DataStore
+import android.util.Log
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
-import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.preferencesDataStoreFile
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import com.hush.app.AppInitializer
@@ -22,6 +23,7 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
 import java.time.Clock
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -41,14 +43,17 @@ abstract class AppModule {
         fun database(@ApplicationContext ctx: Context): HushDatabase =
             HushDatabase(AndroidSqliteDriver(HushDatabase.Schema, ctx, "hush.db"))
 
+        // The DataStore is private to the store: nothing else on the graph should read raw preferences.
+        // A corrupt file falls back to defaults rather than crashing every reader.
         @Provides
         @Singleton
-        fun preferences(@ApplicationContext ctx: Context, @ApplicationScope scope: CoroutineScope): DataStore<Preferences> =
-            PreferenceDataStoreFactory.create(scope = scope) { ctx.preferencesDataStoreFile("settings") }
-
-        @Provides
-        @Singleton
-        fun settingsStore(prefs: DataStore<Preferences>): SettingsStore = DataStoreSettingsStore(prefs)
+        fun settingsStore(@ApplicationContext ctx: Context, @ApplicationScope scope: CoroutineScope): SettingsStore =
+            DataStoreSettingsStore(
+                PreferenceDataStoreFactory.create(
+                    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+                    scope = scope,
+                ) { ctx.preferencesDataStoreFile("settings") },
+            )
 
         // No Logging plugin: bodies carry notification content and the bearer token.
         @Provides
@@ -64,6 +69,12 @@ abstract class AppModule {
         @Provides
         @Singleton
         @ApplicationScope
-        fun applicationScope(): CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        fun applicationScope(): CoroutineScope = CoroutineScope(
+            SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, t ->
+                Log.e(TAG, "Uncaught exception in application scope", t)
+            },
+        )
+
+        private const val TAG = "HushApp"
     }
 }

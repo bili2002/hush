@@ -10,7 +10,7 @@ import androidx.compose.ui.Modifier
 
 /** Centered label used by the wave-1 placeholder screens until their issues land real content. */
 @Composable
-fun PlaceholderScreen(title: String) {
+internal fun PlaceholderScreen(title: String) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(title, style = MaterialTheme.typography.headlineMedium)
     }

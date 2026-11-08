@@ -4,9 +4,11 @@
 Focus engine landed (`focus/**`): `FocusPolicy` + `HoldGate` (the listener's `FocusGate`),
 `Deliverer` (HELD → DELIVERED state machine, one digest per slot on channel `hush.digest`),
 `DeliveryScheduler` (inexact `setAndAllowWhileIdle` alarm at the next slot), `DeliveryReceiver` /
-`RescheduleReceiver` (alarm, boot, app update, timezone, time-set), and `DefaultFocusActionsImpl`
-(the UI's enable / slot / deliver-now). `Deliverer` is an injectable `@Singleton` so the Sync
-worker can call `deliverDue()` as a second safety net. Still open from this issue: the on-device
+`RescheduleReceiver` (alarm, boot, app update, timezone, time-set), `FocusInitializer` (re-arms the
+alarm at process start while Focus is on, so a force-stop cannot strand held rows), and
+`DefaultFocusActionsImpl` (the UI's enable / slot / deliver-now). `FocusModule` also contributes Sync's `DeliverDueHook` (`@Provides @IntoSet`, see
+`docs/changes/5-sync.md`) as an adapter over the non-forced `Deliverer.deliverDue()`, so the periodic
+sync worker is the second safety net for a missed alarm without ever forcing a mid-slot digest. Still open from this issue: the on-device
 checks (Instagram group summary lingering?, Doze delivery timing).
 
 ## Decision
@@ -28,11 +30,14 @@ Why: "one thing to look at" was the owner's ask; stacking hourly digests recreat
 Focus exists to remove. The tap intent carries the exact `delivered_at` so the UI can still open
 on the latest batch.
 
-**[2026-11-08] Alarm is re-armed by `Deliverer`, on every exit path, while Focus is on**
+**[2026-11-08] Alarm is re-armed by `Deliverer` on every exit path while Focus is on, or while anything is still held**
 What: `setAndAllowWhileIdle` is one-shot, so `deliverDue()` reschedules after each run (empty, not
-due, permission denied, or delivered). `setEnabled(false)` turns Focus off first, then force
-delivers, then cancels, so the forced run does not re-arm.
-Why: a single owner of the alarm avoids the receiver/worker/UI each having to remember to re-arm.
+due, permission denied, or delivered) whenever Focus is on, and also whenever rows remain held
+after the run (Focus off but delivery blocked). `setEnabled(false)` turns Focus off first, force
+delivers, then cancels the alarm only if nothing is held and no error was reported; otherwise it
+keeps the alarm so the next slot retries. `FocusInitializer` re-arms at process start.
+Why: a single owner of the alarm avoids the receiver/worker/UI each having to remember to re-arm,
+and "never lose a notification" means a held row always has a pending delivery attempt.
 
 **[2026-11-08] Receivers are `exported="false"`**
 What: both receivers are non-exported; `RescheduleReceiver` still receives the system broadcasts.

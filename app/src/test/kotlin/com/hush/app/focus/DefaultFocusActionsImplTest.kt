@@ -43,7 +43,7 @@ class DefaultFocusActionsImplTest {
         repo = testRepository(clock)
         settings = FakeSettingsStore(Settings(holdPackages = setOf("com.example.alpha")))
         val scheduler = DeliveryScheduler(ctx, settings)
-        actions = DefaultFocusActionsImpl(ctx, settings, Deliverer(ctx, repo, settings, clock, scheduler), scheduler, clock)
+        actions = DefaultFocusActionsImpl(ctx, settings, repo, Deliverer(ctx, repo, settings, clock, scheduler), scheduler, clock)
     }
 
     @AfterTest fun tearDown() = TimeZone.setDefault(originalZone)
@@ -76,6 +76,19 @@ class DefaultFocusActionsImplTest {
         assertEquals(1, shadowOf(nm).allNotifications.size)
         assertEquals(0, repo.selectHeldUndelivered().size)
         assertEquals(0, alarms.size)
+    }
+
+    @Test
+    fun disableKeepsTheAlarmWhenHeldRowsCouldNotBeDelivered() = runTest {
+        actions.setEnabled(true)
+        repo.insert(event("a1", postTime = now - 60_000L, held = true))
+        shadowOf(nm).setNotificationsEnabled(false)
+        actions.setEnabled(false)
+        assertFalse(settings.state.value.focusEnabled)
+        assertEquals(0, shadowOf(nm).allNotifications.size)
+        assertEquals(1, repo.selectHeldUndelivered().size)
+        assertEquals(1, alarms.size, "alarm kept so the next slot retries")
+        assertEquals("Notifications permission denied — digests can't be shown", settings.state.value.lastFocusError)
     }
 
     @Test

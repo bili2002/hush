@@ -5,6 +5,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.text.format.DateFormat
 import org.robolectric.RuntimeEnvironment
 import com.hush.app.db.NotificationRepository
 import com.hush.app.settings.Settings
@@ -14,6 +15,7 @@ import com.hush.app.testing.fixedClock
 import com.hush.app.testing.testRepository
 import com.hush.app.ui.MainActivity
 import java.time.ZoneId
+import java.util.Date
 import java.util.TimeZone
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -46,6 +48,8 @@ class DelivererTest {
     private lateinit var repo: NotificationRepository
     private lateinit var settings: FakeSettingsStore
     private lateinit var deliverer: Deliverer
+
+    private fun since(millis: Long) = "since " + DateFormat.getTimeFormat(ctx).format(Date(millis))
 
     @BeforeTest
     fun setUp() {
@@ -87,7 +91,7 @@ class DelivererTest {
         assertEquals("4 held notifications", n.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
         assertEquals("Alpha 3 · Beta 1", n.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
         assertEquals(
-            listOf("Alpha: T1 — X1", "Alpha: T2", "Alpha: (no text)", "Beta: B — Y", "since 21:02"),
+            listOf("Alpha: T1 — X1", "Alpha: T2", "Alpha: (no text)", "Beta: B — Y", since(slotOpen - 58 * 60_000L)),
             n.extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString().split("\n"),
         )
         val intent = shadowOf(n.contentIntent).savedIntent
@@ -118,7 +122,16 @@ class DelivererTest {
         deliverer.deliverDue()
         val lines = shadowOf(nm).allNotifications.single().extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString().split("\n")
         assertEquals(7, lines.size)
-        assertEquals("since 21:00", lines.last())
+        assertEquals(since(slotOpen - 60 * 60_000L), lines.last())
+    }
+
+    @Test
+    fun digestLinesCollapseWhitespaceAndNewlines() = runTest {
+        repo.insert(event("a1", appLabel = " Alpha\nApp ", postTime = slotOpen - 60_000L, held = true, title = "Line one\nline two", text = "  tabbed\t\ttext  "))
+        deliverer.deliverDue()
+        val lines = shadowOf(nm).allNotifications.single().extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString().split("\n")
+        assertEquals("Alpha App: Line one line two — tabbed text", lines.first())
+        assertEquals("Alpha App 1", shadowOf(nm).allNotifications.single().extras.getCharSequence(Notification.EXTRA_TEXT).toString())
     }
 
     @Test
@@ -164,6 +177,7 @@ class DelivererTest {
         assertTrue(!Deliverer.isDue(slotOpen, now, 60, utc), "posted exactly on the boundary belongs to this slot")
         assertTrue(!Deliverer.isDue(now - 1, now, 60, utc), "posted a moment ago")
         assertTrue(Deliverer.isDue(now - Deliverer.maxAgeMillis(60), now, 60, utc), "max-age reached")
+        assertTrue(Deliverer.isDue(now + 5 * 60_000L, now, 60, utc), "posted in the future: clock was set back")
         assertEquals(120 * 60_000L, Deliverer.maxAgeMillis(15))
         assertEquals(120 * 60_000L, Deliverer.maxAgeMillis(60))
         assertEquals(240 * 60_000L, Deliverer.maxAgeMillis(120))
@@ -199,6 +213,16 @@ class DelivererTest {
         shadowOf(nm).setNotificationsEnabled(true)
         assertEquals(DeliverResult(4), deliverer.deliverDue())
         assertNull(settings.state.value.lastFocusError)
+    }
+
+    @Test
+    fun deniedWhileFocusOffStillReArmsSoTheNextSlotRetries() = runTest {
+        seedPreviousSlot()
+        settings.update { it.copy(focusEnabled = false) }
+        shadowOf(nm).setNotificationsEnabled(false)
+        assertEquals(0, deliverer.deliverDue(force = true).delivered)
+        assertEquals(4, repo.selectHeldUndelivered().size)
+        assertEquals(1, alarms.size)
     }
 
     @Test

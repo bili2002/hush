@@ -7,7 +7,6 @@ import com.hush.app.di.ApplicationScope
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.launch
 
 /**
  * Alarms are cleared on reboot and on app update, and an RTC alarm drifts when the clock or zone
@@ -22,15 +21,10 @@ class RescheduleReceiver : BroadcastReceiver() {
     @Inject @ApplicationScope lateinit var scope: CoroutineScope
 
     override fun onReceive(context: Context, intent: Intent) {
+        // Fields are injected by the Hilt-generated base class (bytecode transform) before this runs;
+        // BroadcastReceiver.onReceive is abstract at compile time, so there is no super call to make.
         if (intent.action !in HANDLED_ACTIONS) return
-        val pending = goAsync()
-        scope.launch {
-            try {
-                deliverer.deliverDue()
-            } finally {
-                pending.finish()
-            }
-        }
+        deliverDueAsync(scope, deliverer)
     }
 
     private companion object {

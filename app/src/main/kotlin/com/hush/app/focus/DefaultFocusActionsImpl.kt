@@ -2,15 +2,17 @@ package com.hush.app.focus
 
 import android.content.Context
 import com.hush.app.R
+import com.hush.app.db.NotificationRepository
 import com.hush.app.settings.SettingsStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.time.Clock
 import javax.inject.Inject
 
-/** The UI's Focus controls. Replaces the foundation's no-op [DefaultFocusActions] in [FocusModule]. */
+/** The UI's Focus controls; the [FocusActions] binding. */
 class DefaultFocusActionsImpl @Inject constructor(
     @ApplicationContext private val ctx: Context,
     private val settings: SettingsStore,
+    private val repo: NotificationRepository,
     private val deliverer: Deliverer,
     private val scheduler: DeliveryScheduler,
     private val clock: Clock,
@@ -26,10 +28,15 @@ class DefaultFocusActionsImpl @Inject constructor(
             settings.update { it.copy(focusEnabled = true, lastFocusError = null) }
             scheduler.schedule(clock.millis())
         } else {
-            // Off first so the forced delivery below does not re-arm the alarm we are about to cancel.
+            // Off first: the gate stops holding new rows before we flush the ones already held.
             settings.update { it.copy(focusEnabled = false) }
-            deliverer.deliverDue(force = true)
-            scheduler.cancel()
+            val result = deliverer.deliverDue(force = true)
+            if (result.error == null && repo.selectHeldUndelivered().isEmpty()) {
+                scheduler.cancel()
+            } else {
+                // Something is still held (e.g. notifications denied): keep retrying at slot boundaries.
+                scheduler.schedule(clock.millis())
+            }
         }
     }
 

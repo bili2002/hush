@@ -8,9 +8,9 @@ import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
 /**
- * The one OS-facing piece. Thin glue: every callback is a single launch into the application scope
- * (never a service scope: `onDestroy` must not cancel an in-flight insert) that delegates to
- * [NotificationIngest]. Fields are injected by Hilt in `onCreate`; nothing runs in the constructor.
+ * The one OS-facing piece. Thin glue: every callback is a single serial launch into the application
+ * scope (never a service scope: `onDestroy` must not cancel an in-flight insert) that delegates to
+ * [NotificationIngest], which also catches anything the block throws (fail open, never crash). Fields are injected by Hilt in `onCreate`; nothing runs in the constructor.
  *
  * The FQCN `com.hush.app.listener.NotificationCollectorService` is referenced by name elsewhere
  * (the sync issue's `requestRebind`); do not rename.
@@ -29,27 +29,24 @@ class NotificationCollectorService : NotificationListenerService() {
             Log.w(TAG, "getActiveNotifications failed: ${e.javaClass.simpleName}")
             emptyList()
         }
-        ingest.launch {
-            ingest.onConnected()
-            ingest.onBackfill(active)
-        }
+        ingest.launch("connected") { ingest.onConnected(active) }
     }
 
     override fun onListenerDisconnected() {
         Log.i(TAG, "listener disconnected; requesting rebind")
-        ingest.launch { ingest.onDisconnected() }
+        ingest.launch("disconnected") { ingest.onDisconnected() }
         requestRebind(ComponentName(this, NotificationCollectorService::class.java))
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?, rankingMap: RankingMap?) {
         sbn ?: return
         val importance = importanceOf(sbn.key, rankingMap)
-        ingest.launch { ingest.onPosted(sbn, importance) { key -> cancelNotification(key) } }
+        ingest.launch("posted ${sbn.packageName}") { ingest.onPosted(sbn, importance) { key -> cancelNotification(key) } }
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?, rankingMap: RankingMap?, reason: Int) {
         sbn ?: return
-        ingest.launch { ingest.onRemoved(sbn, reason) }
+        ingest.launch("removed ${sbn.packageName}") { ingest.onRemoved(sbn, reason) }
     }
 
     /** Null when the ranking map is absent, empty, or does not know the key. Never throws. */

@@ -9,11 +9,13 @@ import com.hush.app.db.NotificationRepository
 import com.hush.app.focus.Decision
 import com.hush.app.focus.FocusGate
 import com.hush.app.settings.Settings
+import com.hush.app.settings.SettingsStore
 import com.hush.app.testing.FakeSettingsStore
 import com.hush.app.testing.fixedClock
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,14 +43,16 @@ class NotificationIngestTest {
     private val cancelled = mutableListOf<String>()
     private val cancel: (String) -> Unit = { cancelled += it }
 
-    private val ingest = NotificationIngest(
+    private fun ingest(store: SettingsStore = settings) = NotificationIngest(
         repo = repo,
         gate = gate,
-        settings = settings,
+        settings = store,
         clock = clock,
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
         mapper = NotificationMapper(appContext()),
     )
+
+    private val ingest = ingest()
 
     private suspend fun rows() = repo.selectRecent(limit = 100, before = Long.MAX_VALUE).first()
 
@@ -184,7 +188,7 @@ class NotificationIngestTest {
 
     @Test
     fun `connected and disconnected stamp the settings with the clock`() = runTest {
-        ingest.onConnected()
+        ingest.onConnected(emptyList())
         assertEquals(5_000L, settings.state.value.listenerConnectedAt)
         assertNull(settings.state.value.listenerDisconnectedAt)
 
@@ -199,5 +203,85 @@ class NotificationIngestTest {
 
         settings.state.value = Settings()
         assertEquals(Decision.PASS_THROUGH, ingest.onPosted(sbn(), null, cancel))
+    }
+
+    @Test
+    fun `cancel failure forgets the key so an identical re-post is recorded again`() = runTest {
+        gate.decision = Decision.HOLD
+        assertEquals(Decision.HOLD, ingest.onPosted(sbn(postTime = 1_000L), null) { throw SecurityException("not connected") })
+
+        gate.decision = Decision.PASS_THROUGH
+        assertEquals(Decision.PASS_THROUGH, ingest.onPosted(sbn(postTime = 2_000L), null, cancel))
+
+        val all = rows().sortedBy { it.postTime }
+        assertEquals(2, all.size)
+        assertEquals(listOf(true, false), all.map { it.held })
+    }
+
+    @Test
+    fun `cancel success keeps the key so an identical pass-through re-post is collapsed`() = runTest {
+        gate.decision = Decision.HOLD
+        ingest.onPosted(sbn(postTime = 1_000L), null, cancel)
+        gate.decision = Decision.PASS_THROUGH
+        assertNull(ingest.onPosted(sbn(postTime = 2_000L), null, cancel))
+        assertEquals(1, rows().size)
+    }
+
+    @Test
+    fun `HOLD for a posting the backfill already recorded is downgraded - never cancelled`() = runTest {
+        val s = sbn(postTime = 1_000L)
+        ingest.onBackfill(listOf(s))
+        gate.decision = Decision.HOLD
+
+        val decision = ingest.onPosted(s, 3, cancel)
+
+        // Downgraded to PASS_THROUGH, then collapsed by the dedupe cache (same text as the backfilled row): null.
+        assertNull(decision)
+        assertTrue(cancelled.isEmpty())
+        val row = rows().single()
+        assertFalse(row.held)
+        assertNull(row.importance) // the backfilled row is what remains
+    }
+
+    @Test
+    fun `HOLD for a new posting of a backfilled key is still held`() = runTest {
+        ingest.onBackfill(listOf(sbn(postTime = 1_000L)))
+        gate.decision = Decision.HOLD
+        val later = sbn(postTime = 2_000L)
+
+        assertEquals(Decision.HOLD, ingest.onPosted(later, null, cancel))
+
+        assertEquals(listOf(later.key), cancelled)
+        assertEquals(setOf(false, true), rows().map { it.held }.toSet())
+    }
+
+    @Test
+    fun `a new backfill replaces the remembered postings`() = runTest {
+        val first = sbn(postTime = 1_000L)
+        ingest.onBackfill(listOf(first))
+        ingest.onBackfill(listOf(sbn(id = 9, postTime = 5_000L)))
+        gate.decision = Decision.HOLD
+
+        assertEquals(Decision.HOLD, ingest.onPosted(first, null, cancel))
+        assertEquals(listOf(first.key), cancelled)
+    }
+
+    @Test
+    fun `backfill still runs when the connected stamp fails`() = runTest {
+        val broken = object : SettingsStore by settings {
+            override suspend fun update(block: (Settings) -> Settings) = throw IllegalStateException("datastore down")
+        }
+        ingest(broken).onConnected(listOf(sbn()))
+
+        assertEquals(1, rows().size)
+        assertNull(settings.state.value.listenerConnectedAt)
+    }
+
+    @Test
+    fun `connected stamps then backfills`() = runTest {
+        ingest.onConnected(listOf(sbn(id = 1), sbn(id = 2)))
+        assertEquals(5_000L, settings.state.value.listenerConnectedAt)
+        assertEquals(2, rows().size)
+        assertEquals(0, gate.calls)
     }
 }

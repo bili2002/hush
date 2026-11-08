@@ -41,9 +41,23 @@ extra row is recorded once. Not worth a schema query in a sibling's files.
 
 **[2026-11-08] Backfill bypasses the gate and is stored `held = false`**
 What: `onListenerConnected` reads `getActiveNotifications()` (try/catch, on the binder thread) and
-inserts each through the mapper with `held = false`, never consulting `FocusGate`.
+inserts each through the mapper with `held = false`, never consulting `FocusGate`. The ingest
+remembers the backfilled `(key, postTime)` pairs until the next backfill; a HOLD decision for exactly
+one of those postings is downgraded to PASS_THROUGH, so a row the backfill wrote as visible is never
+cancelled. A new posting of the same key (new `postTime`) is held normally.
 Why: those notifications are already on screen. Holding them now would cancel something the owner
 has seen and start a delivery timer for it, which is neither "hold" nor "pass through".
+
+**[2026-11-08] Listener callbacks are serialized and never throw**
+What: `NotificationIngest.launch` runs every callback on `Dispatchers.IO.limitedParallelism(1)` in
+the application scope, with the whole block in try/catch (log = callback label + package + exception
+class, never text). `onConnected` runs the settings stamp and the backfill under separate
+`runCatching`. A failed HOLD cancel also forgets the key in the dedupe cache.
+Why: one dispatcher slot means insert order = arrival order, so POSTED/REMOVED for one key cannot
+invert and the dedupe cache sees events in sequence. Catching at the launch boundary keeps a broken
+`Settings` read, gate or mapper from killing the listener process ("never crash, fail open"); the
+app scope's `CoroutineExceptionHandler` is the last line, not the first. Forgetting the key after a
+failed cancel guarantees an identical re-post is recorded and cancelled again rather than collapsed.
 
 **[2026-11-08] Ingest signatures differ slightly from the issue text**
 What: `NotificationMapper.map(sbn, importance, settings)` takes the `Settings` snapshot (filters

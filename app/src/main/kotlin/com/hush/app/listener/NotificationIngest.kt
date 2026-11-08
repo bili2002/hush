@@ -11,10 +11,13 @@ import com.hush.app.settings.SettingsStore
 import java.time.Clock
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -24,6 +27,7 @@ import kotlinx.coroutines.withContext
  * [NonCancellable]; a cancel is attempted only after the insert returned, and only for HOLD. If the
  * insert throws we log and leave the notification visible (fail open).
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 @Singleton
 class NotificationIngest @Inject constructor(
     private val repo: NotificationRepository,
@@ -35,8 +39,30 @@ class NotificationIngest @Inject constructor(
 ) {
     private val dedupe = DedupeCache()
 
-    /** Runs [block] in the application scope, so an in-flight insert survives the service being destroyed. */
-    fun launch(block: suspend () -> Unit): Job = scope.launch { block() }
+    /** Callbacks run one at a time, in arrival order: a POSTED/REMOVED pair for one key can never invert. */
+    private val serial = Dispatchers.IO.limitedParallelism(1)
+
+    /**
+     * `(key, postTime)` of every notification recorded by the last backfill. A HOLD for exactly that
+     * posting is downgraded to PASS_THROUGH: its row already exists with `held = false` and the owner
+     * has seen it, so cancelling it would hide a notification we never marked as held.
+     */
+    private val backfilled = HashSet<Pair<String, Long>>()
+
+    /**
+     * Runs [block] serially in the application scope, so an in-flight insert survives the service being
+     * destroyed. Any failure is logged and dropped: the listener process must never die because of one
+     * notification. [what] is a short label (callback + package), never notification text.
+     */
+    fun launch(what: String, block: suspend () -> Unit): Job = scope.launch(serial) {
+        try {
+            block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "$what failed: ${e.javaClass.simpleName}")
+        }
+    }
 
     /**
      * Returns the gate's decision when a row was written, null when the event was filtered, collapsed
@@ -45,7 +71,11 @@ class NotificationIngest @Inject constructor(
      */
     suspend fun onPosted(sbn: StatusBarNotification, importance: Int?, cancel: (key: String) -> Unit): Decision? {
         val event = mapper.map(sbn, importance, settings.current()) ?: return null
-        val decision = gate.decide(event)
+        var decision = gate.decide(event)
+        if (decision == Decision.HOLD && synchronized(backfilled) { (event.key to event.postTime) in backfilled }) {
+            Log.i(TAG, "HOLD downgraded for ${sbn.packageName}: already recorded by backfill as visible")
+            decision = Decision.PASS_THROUGH
+        }
         // A re-posted held notification must be cancelled again, so HOLD is never collapsed.
         if (decision != Decision.HOLD && dedupe.isDuplicate(event)) return null
 
@@ -62,8 +92,10 @@ class NotificationIngest @Inject constructor(
             try {
                 cancel(sbn.key)
             } catch (e: RuntimeException) {
-                // SecurityException / listener not connected: the row stays held, the Focus max-age guard delivers it.
+                // SecurityException / listener not connected: the row stays held and the Focus max-age guard
+                // delivers it. Forget the key so an identical re-post is recorded (and cancelled) again.
                 Log.w(TAG, "cancelNotification failed for ${sbn.packageName}: ${e.javaClass.simpleName}")
+                dedupe.forget(sbn.key)
             }
         }
         return decision
@@ -81,30 +113,44 @@ class NotificationIngest @Inject constructor(
     }
 
     /**
-     * Records notifications that were already visible when the listener bound. They bypass the gate
-     * and are stored with `held = false`: the owner has seen them, holding now would be a lie.
+     * Listener bound: stamp the settings, then record what was already visible. The two steps are
+     * independent: a failing stamp must not cost the backfill, and vice versa.
      */
-    suspend fun onBackfill(active: List<StatusBarNotification>) {
-        val snapshot = settings.current()
-        for (sbn in active) {
-            val event = mapper.map(sbn, importance = null, settings = snapshot) ?: continue
-            try {
-                withContext(NonCancellable) { repo.insert(event) }
-                dedupe.remember(event)
-            } catch (e: Exception) {
-                Log.e(TAG, "backfill insert failed for ${sbn.packageName}", e)
-            }
-        }
-    }
-
-    suspend fun onConnected() {
+    suspend fun onConnected(active: List<StatusBarNotification>) {
         val now = clock.millis()
-        settings.update { it.copy(listenerConnectedAt = now) }
+        runCatching { settings.update { it.copy(listenerConnectedAt = now) } }
+            .onFailure { Log.e(TAG, "connected stamp failed: ${it.javaClass.simpleName}") }
+        runCatching { onBackfill(active) }
+            .onFailure { Log.e(TAG, "backfill failed: ${it.javaClass.simpleName}") }
     }
 
     suspend fun onDisconnected() {
         val now = clock.millis()
         settings.update { it.copy(listenerDisconnectedAt = now) }
+    }
+
+    /**
+     * Records notifications that were already visible when the listener bound. They bypass the gate
+     * and are stored with `held = false`: the owner has seen them, holding now would be a lie.
+     */
+    suspend fun onBackfill(active: List<StatusBarNotification>) {
+        synchronized(backfilled) { backfilled.clear() }
+        val snapshot = settings.current()
+        for (sbn in active) {
+            val event = try {
+                mapper.map(sbn, importance = null, settings = snapshot) ?: continue
+            } catch (e: RuntimeException) {
+                Log.e(TAG, "backfill map failed for ${sbn.packageName}: ${e.javaClass.simpleName}")
+                continue
+            }
+            try {
+                withContext(NonCancellable) { repo.insert(event) }
+                dedupe.remember(event)
+                synchronized(backfilled) { backfilled += event.key to event.postTime }
+            } catch (e: Exception) {
+                Log.e(TAG, "backfill insert failed for ${sbn.packageName}", e)
+            }
+        }
     }
 
     private companion object {

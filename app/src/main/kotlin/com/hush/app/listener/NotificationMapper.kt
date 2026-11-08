@@ -34,6 +34,7 @@ class NotificationMapper @Inject constructor(@ApplicationContext context: Contex
         val n = sbn.notification
         val extras = n.extras
         val textLines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+            ?.filterNotNull()
             ?.joinToString("\n") { it.toString() }
             ?.ifEmpty { null }
         val bigText = listOfNotNull(
@@ -42,32 +43,26 @@ class NotificationMapper @Inject constructor(@ApplicationContext context: Contex
             messagingLines(n),
         ).joinToString("\n").ifEmpty { null }?.take(MAX_BIG_TEXT_CHARS)
 
-        return NotificationEvent(
-            id = eventId(sbn.key, sbn.postTime, EventType.POSTED),
-            key = sbn.key,
-            packageName = sbn.packageName,
-            appLabel = appLabel(sbn.packageName),
-            postTime = sbn.postTime,
+        return base(sbn, EventType.POSTED).copy(
             title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString(),
             text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString(),
             bigText = bigText,
             subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString(),
-            channelId = n.channelId,
-            category = n.category,
-            flags = n.flags,
             importance = importance,
-            event = EventType.POSTED,
-            removedReason = null,
-            held = false,
         )
     }
 
     /** A REMOVED row: package, key, times, reason. No text, so a removal never re-archives content. */
     fun mapRemoved(sbn: StatusBarNotification, reason: Int, settings: Settings): NotificationEvent? {
         if (NoiseFilters.reason(sbn, settings, ownPackage) != null) return null
+        return base(sbn, EventType.REMOVED).copy(removedReason = reason)
+    }
+
+    /** The text-free skeleton shared by both event types: identity, package, times, channel, category, flags. */
+    private fun base(sbn: StatusBarNotification, event: EventType): NotificationEvent {
         val n = sbn.notification
         return NotificationEvent(
-            id = eventId(sbn.key, sbn.postTime, EventType.REMOVED),
+            id = eventId(sbn.key, sbn.postTime, event),
             key = sbn.key,
             packageName = sbn.packageName,
             appLabel = appLabel(sbn.packageName),
@@ -80,8 +75,8 @@ class NotificationMapper @Inject constructor(@ApplicationContext context: Contex
             category = n.category,
             flags = n.flags,
             importance = null,
-            event = EventType.REMOVED,
-            removedReason = reason,
+            event = event,
+            removedReason = null,
             held = false,
         )
     }
@@ -102,10 +97,17 @@ class NotificationMapper @Inject constructor(@ApplicationContext context: Contex
         return lines.joinToString("\n").ifEmpty { null }
     }
 
-    private fun appLabel(packageName: String): String = labels.getOrPut(packageName) {
-        try {
+    /** Cached per package on success only; a lookup failure falls back to the package name and is retried next time. */
+    private fun appLabel(packageName: String): String {
+        labels[packageName]?.let { return it }
+        return try {
             packageManager.getApplicationLabel(packageManager.getApplicationInfo(packageName, 0)).toString()
+                .also { labels[packageName] = it }
         } catch (e: PackageManager.NameNotFoundException) {
+            packageName
+        } catch (e: RuntimeException) {
+            // PackageManager died / binder hiccup: the row still gets written, with the package as its label.
+            Log.w(TAG, "label lookup failed for $packageName: ${e.javaClass.simpleName}")
             packageName
         }
     }

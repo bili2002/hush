@@ -57,6 +57,15 @@ class NotificationMapperTest {
     }
 
     @Test
+    fun `null entries in EXTRA_TEXT_LINES are skipped`() {
+        val n = notification().also {
+            it.extras.putCharSequenceArray(Notification.EXTRA_TEXT_LINES, arrayOf<CharSequence?>("one", null, "two"))
+        }
+        val e = assertNotNull(mapper.map(sbn(n), null, settings))
+        assertEquals("one\ntwo", e.bigText)
+    }
+
+    @Test
     fun `MessagingStyle messages and historic messages become sender-prefixed lines`() {
         val n = messagingNotification(
             messages = listOf("Ann" to "hi", null to "anonymous"),
@@ -104,6 +113,18 @@ class NotificationMapperTest {
         )
         val e = assertNotNull(mapper.map(sbn(packageName = "com.example.labelled"), null, settings))
         assertEquals("Labelled App", e.appLabel)
+    }
+
+    @Test
+    fun `a failed label lookup is not cached - the label appears once the package is visible`() {
+        assertEquals("com.example.late", mapper.map(sbn(packageName = "com.example.late"), null, settings)!!.appLabel)
+        shadowOf(appContext().packageManager).installPackage(
+            PackageInfo().apply {
+                packageName = "com.example.late"
+                applicationInfo = ApplicationInfo().apply { packageName = "com.example.late"; nonLocalizedLabel = "Late App" }
+            },
+        )
+        assertEquals("Late App", mapper.map(sbn(packageName = "com.example.late"), null, settings)!!.appLabel)
     }
 
     @Test

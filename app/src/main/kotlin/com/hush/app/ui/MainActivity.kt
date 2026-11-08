@@ -113,7 +113,7 @@ fun HushRoot(
     }
     // Screens ask for pushes (Focus → hold-list picker) without the NavHost call sites growing parameters.
     LaunchedEffect(navigationRequests) {
-        navigationRequests.collect { navController.navigate(it) }
+        navigationRequests.collect { route -> navController.navigate(route) { launchSingleTop = true } }
     }
     // Leaving History drops the digest filter; a rotation is not "leaving" (the restored stack is still on History).
     val onHistory = currentDestination?.hierarchy?.any { it.route == Routes.HISTORY } == true

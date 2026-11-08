@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 
@@ -54,8 +55,12 @@ data class HistoryUiState(
     val canLoadMore: Boolean = false,
 )
 
-/** Rows tagged with the mode they were loaded for, so the state never pairs a new mode with stale rows. */
-private data class Page(val mode: HistoryMode, val rows: List<NotificationEvent>, val limit: Int)
+/**
+ * Rows tagged with the mode they were loaded for, so the state never pairs a new mode with stale rows.
+ * [rawCount] is the row count before the POSTED filter: paging is decided on what the query returned,
+ * not on what survived the filter, or a page full of REMOVED rows would look like the end of the archive.
+ */
+private data class Page(val mode: HistoryMode, val rows: List<NotificationEvent>, val limit: Int, val rawCount: Int)
 
 @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
 @HiltViewModel
@@ -91,9 +96,13 @@ class HistoryViewModel(
     ) { link, q, app ->
         link?.let { HistoryMode.HeldBatch(it.deliveredAt) } ?: HistoryMode.Browse(q, app)
     }.distinctUntilChanged()
+        // A new mode starts over at one page; "load more" growth belongs to the mode it happened in.
+        .onEach { limit.value = PAGE }
 
     private val page: Flow<Page?> = combine(mode, limit) { m, l -> m to l }
-        .flatMapLatest { (m, l) -> source(m, l).map { rows -> Page(m, rows.filter { it.event == EventType.POSTED }, l) } }
+        .flatMapLatest { (m, l) ->
+            source(m, l).map { rows -> Page(m, rows.filter { it.event == EventType.POSTED }, l, rawCount = rows.size) }
+        }
         .map<Page, Page?> { it }
         .onStart { emit(null) }
 
@@ -110,13 +119,14 @@ class HistoryViewModel(
                     expandedId = expanded,
                     empty = if (page.rows.isEmpty()) emptyKind(page.mode, listenerOn) else null,
                     listenerEnabled = listenerOn,
-                    canLoadMore = page.mode is HistoryMode.Browse && page.rows.size >= page.limit,
+                    canLoadMore = page.mode is HistoryMode.Browse && page.rawCount >= page.limit,
                 )
             }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HistoryUiState())
 
     private fun source(mode: HistoryMode, limit: Int): Flow<List<NotificationEvent>> = when (mode) {
-        is HistoryMode.HeldBatch -> flow { emit(repo.selectHeldBatch(mode.deliveredAt)) }
+        // The repository returns a batch oldest-first (delivery order); the list is newest-first like the rest.
+        is HistoryMode.HeldBatch -> flow { emit(repo.selectHeldBatch(mode.deliveredAt).sortedByDescending { it.postTime }) }
         is HistoryMode.Browse ->
             if (mode.query.isEmpty() && mode.app == null) repo.selectRecent(limit, Long.MAX_VALUE)
             // `search("")` matches every row with any text, which is also how an app-only filter stays

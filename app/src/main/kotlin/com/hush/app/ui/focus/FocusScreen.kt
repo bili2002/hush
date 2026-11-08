@@ -1,9 +1,6 @@
 package com.hush.app.ui.focus
 
 import android.Manifest
-import android.app.Activity
-import android.content.Context
-import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -42,6 +39,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -54,8 +54,11 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.hush.app.R
+import com.hush.app.ui.components.appNotificationSettingsIntent
+import com.hush.app.ui.components.findActivity
 import com.hush.app.ui.components.formatClock
 import com.hush.app.ui.components.relativeAgo
+import com.hush.app.ui.components.startActivitySafely
 import java.time.ZoneId
 
 /** Everything the Focus screen can ask the outside world to do; stateless content takes this so previews can no-op it. */
@@ -75,6 +78,9 @@ fun FocusScreen(vm: FocusViewModel = hiltViewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val activity = context.findActivity()
+    // Set when a system settings page could not be opened on this device; shown as one line, cleared on the next attempt.
+    var launchFailed by rememberSaveable { mutableStateOf(false) }
+    val open: (Intent) -> Unit = { launchFailed = !context.startActivitySafely(it) }
 
     LifecycleResumeEffect(Unit) {
         vm.refreshSystemState()
@@ -88,20 +94,21 @@ fun FocusScreen(vm: FocusViewModel = hiltViewModel()) {
         if (!granted && activity != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             !ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.POST_NOTIFICATIONS)
         ) {
-            context.startActivitySafely(appNotificationSettingsIntent(context))
+            open(appNotificationSettingsIntent(context))
         }
     }
 
     FocusContent(
         state = state,
         zone = ZoneId.systemDefault(),
+        launchFailed = launchFailed,
         callbacks = FocusCallbacks(
             onToggle = vm::setEnabled,
             onSlot = vm::setSlotMinutes,
             onDeliverNow = vm::deliverNow,
             onDismissResult = vm::dismissDeliverResult,
             onEditHoldList = vm::editHoldList,
-            onOpenListenerSettings = { context.startActivitySafely(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
+            onOpenListenerSettings = { open(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
             onRequestPostPermission = {
                 if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return@FocusCallbacks
                 val perm = Manifest.permission.POST_NOTIFICATIONS
@@ -111,13 +118,19 @@ fun FocusScreen(vm: FocusViewModel = hiltViewModel()) {
                     permissionLauncher.launch(perm)
                 }
             },
-            onOpenBatterySettings = { context.startActivitySafely(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) },
+            onOpenBatterySettings = { open(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) },
         ),
     )
 }
 
 @Composable
-fun FocusContent(state: FocusUiState, zone: ZoneId, callbacks: FocusCallbacks, modifier: Modifier = Modifier) {
+fun FocusContent(
+    state: FocusUiState,
+    zone: ZoneId,
+    callbacks: FocusCallbacks,
+    modifier: Modifier = Modifier,
+    launchFailed: Boolean = false,
+) {
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -126,6 +139,14 @@ fun FocusContent(state: FocusUiState, zone: ZoneId, callbacks: FocusCallbacks, m
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(stringResource(R.string.focus_title), style = MaterialTheme.typography.headlineMedium)
+
+        if (launchFailed) {
+            Text(
+                stringResource(R.string.focus_launch_failed),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
 
         if (state.loading) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -163,15 +184,24 @@ private fun ToggleCard(state: FocusUiState, zone: ZoneId, callbacks: FocusCallba
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Switch(checked = state.enabled, onCheckedChange = callbacks.onToggle, enabled = state.canToggle)
+                // Turning OFF is always possible; only OFF → ON is gated.
+                Switch(checked = state.enabled, onCheckedChange = callbacks.onToggle, enabled = state.switchEnabled)
             }
 
             if (state.enabled) {
-                state.nextSlotAt?.let { at ->
+                if (state.onButGated) {
                     Text(
-                        stringResource(R.string.focus_next_digest, formatClock(at, zone), state.heldCount),
+                        stringResource(R.string.focus_on_but_gated),
                         style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.error,
                     )
+                } else {
+                    state.nextSlotAt?.let { at ->
+                        Text(
+                            stringResource(R.string.focus_next_digest, formatClock(at, zone), state.heldCount),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                    }
                 }
                 Text(stringResource(R.string.focus_slot_label), style = MaterialTheme.typography.labelLarge)
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
@@ -346,20 +376,3 @@ private fun ListenerHealthLine(health: ListenerHealth) {
         )
     }
 }
-
-internal fun Context.findActivity(): Activity? {
-    var ctx: Context = this
-    while (ctx is ContextWrapper) {
-        if (ctx is Activity) return ctx
-        ctx = ctx.baseContext
-    }
-    return null
-}
-
-internal fun Context.startActivitySafely(intent: Intent) {
-    runCatching { startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-}
-
-/** The app's own notification settings page (minSdk 26, so the O+ action is always available). */
-internal fun appNotificationSettingsIntent(context: Context): Intent =
-    Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)

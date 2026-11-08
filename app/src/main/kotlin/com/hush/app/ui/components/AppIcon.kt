@@ -22,8 +22,11 @@ import androidx.core.graphics.drawable.toBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+/** A cache entry; `bitmap == null` records a miss (uninstalled app) so it is not re-queried per row. */
+private class CachedIcon(val bitmap: ImageBitmap?)
+
 /** Process-wide icon cache keyed by package; the PackageManager lookup is the slow part. */
-private val iconCache = LruCache<String, ImageBitmap>(96)
+private val iconCache = LruCache<String, CachedIcon>(96)
 
 private const val ICON_PX = 128
 
@@ -36,12 +39,16 @@ private fun loadAppIcon(context: Context, packageName: String): ImageBitmap? = r
 fun AppIcon(packageName: String, modifier: Modifier = Modifier, size: Dp = 40.dp) {
     val context = LocalContext.current
     val inspection = LocalInspectionMode.current
-    val bitmap by produceState<ImageBitmap?>(initialValue = iconCache.get(packageName), packageName) {
-        if (value == null && !inspection) {
-            val loaded = withContext(Dispatchers.IO) { loadAppIcon(context, packageName) }
-            if (loaded != null) iconCache.put(packageName, loaded)
-            value = loaded
+    val bitmap by produceState<ImageBitmap?>(initialValue = null, packageName) {
+        val cached = iconCache.get(packageName)
+        if (cached != null) {
+            value = cached.bitmap
+            return@produceState
         }
+        if (inspection) return@produceState
+        val loaded = withContext(Dispatchers.IO) { loadAppIcon(context, packageName) }
+        iconCache.put(packageName, CachedIcon(loaded))
+        value = loaded
     }
     val sized = modifier.size(size)
     val icon = bitmap

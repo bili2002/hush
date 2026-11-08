@@ -129,7 +129,7 @@ class HistoryViewModelTest {
 
         val batch = vm.state.first { it.mode is HistoryMode.HeldBatch }
         assertEquals(HistoryMode.HeldBatch(1_000), batch.mode)
-        assertEquals(listOf("h1", "h2"), batch.ids())
+        assertEquals(listOf("h2", "h1"), batch.ids(), "batch is newest-first like the rest of the list")
         assertEquals(1_000L, batch.days.single().items.first().deliveredAt)
 
         vm.clearDigestLink()
@@ -195,5 +195,42 @@ class HistoryViewModelTest {
     fun `canLoadMore only when the page is full`() = runTest {
         repo.insert(event("a"))
         assertTrue(!vm().loaded().canLoadMore)
+    }
+
+    @Test
+    fun `paging counts the raw page so a REMOVED row inside a full page still allows load more`() = runTest {
+        val page = HistoryViewModel.PAGE
+        repeat(page) { i -> repo.insert(event("r$i", postTime = 1_000L + i, event = if (i == 5) EventType.REMOVED else EventType.POSTED)) }
+        repo.insert(event("older", postTime = 1L))
+
+        val vm = vm()
+        val first = vm.loaded()
+        assertEquals(page - 1, first.ids().size, "the REMOVED row is hidden")
+        assertTrue(first.canLoadMore, "but the page was full, so more may exist")
+
+        vm.loadMore()
+
+        val second = vm.state.first { it.ids().size > page - 1 }
+        assertEquals(page, second.ids().size)
+        assertEquals("older", second.ids().last())
+        assertTrue(!second.canLoadMore)
+    }
+
+    @Test
+    fun `changing mode resets the page size`() = runTest {
+        val page = HistoryViewModel.PAGE
+        repeat(page + 1) { i -> repo.insert(event("r$i", postTime = 1_000L + i)) }
+        val vm = vm()
+        assertTrue(vm.loaded().canLoadMore)
+
+        vm.loadMore()
+        val grown = vm.state.first { it.ids().size == page + 1 }
+        assertTrue(!grown.canLoadMore)
+
+        // Every fixture title starts with "title", so the search matches all rows: back to one page.
+        vm.setQuery("title")
+        val searched = vm.state.first { (it.mode as? HistoryMode.Browse)?.query == "title" }
+        assertEquals(page, searched.ids().size)
+        assertTrue(searched.canLoadMore)
     }
 }

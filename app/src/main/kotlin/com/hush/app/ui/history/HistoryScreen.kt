@@ -37,6 +37,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,7 +56,7 @@ import com.hush.app.db.NotificationEvent
 import com.hush.app.ui.components.AppIcon
 import com.hush.app.ui.components.dayLabel
 import com.hush.app.ui.components.formatClock
-import com.hush.app.ui.focus.startActivitySafely
+import com.hush.app.ui.components.startActivitySafely
 import java.time.LocalDate
 import java.time.ZoneId
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -73,6 +76,7 @@ fun HistoryScreen(vm: HistoryViewModel = hiltViewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
     val query by vm.query.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    var launchFailed by rememberSaveable { mutableStateOf(false) }
 
     LifecycleResumeEffect(Unit) {
         vm.refreshSystemState()
@@ -85,13 +89,16 @@ fun HistoryScreen(vm: HistoryViewModel = hiltViewModel()) {
         query = query,
         zone = ZoneId.systemDefault(),
         today = LocalDate.now(ZoneId.systemDefault()),
+        launchFailed = launchFailed,
         callbacks = HistoryCallbacks(
             onQueryChange = vm::setQuery,
             onAppFilter = vm::setAppFilter,
             onToggleExpand = vm::toggleExpanded,
             onShowAll = vm::clearDigestLink,
             onLoadMore = vm::loadMore,
-            onEnableListener = { context.startActivitySafely(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
+            onEnableListener = {
+                launchFailed = !context.startActivitySafely(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            },
         ),
     )
 }
@@ -104,8 +111,17 @@ fun HistoryContent(
     today: LocalDate,
     callbacks: HistoryCallbacks,
     modifier: Modifier = Modifier,
+    launchFailed: Boolean = false,
 ) {
     Column(modifier = modifier.fillMaxSize()) {
+        if (launchFailed) {
+            Text(
+                stringResource(R.string.history_launch_failed),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        }
         val batch = state.mode as? HistoryMode.HeldBatch
         if (batch != null) {
             DigestBanner(deliveredAt = batch.deliveredAt, zone = zone, onShowAll = callbacks.onShowAll)
@@ -198,7 +214,8 @@ private fun NotificationList(state: HistoryUiState, zone: ZoneId, today: LocalDa
         LaunchedEffect(listState, state.days) {
             snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
                 .distinctUntilChanged()
-                .filter { it >= listState.layoutInfo.totalItemsCount - 5 }
+                // totalItemsCount is 0 before the first layout pass; "0 >= -5" must not request a page.
+                .filter { last -> listState.layoutInfo.totalItemsCount.let { total -> total > 0 && last >= total - 5 } }
                 .collect { callbacks.onLoadMore() }
         }
     }

@@ -100,6 +100,8 @@
     <string name="focus_ago_minutes">%1$d min ago</string>
     <string name="focus_ago_hours">%1$d h ago</string>
     <string name="focus_ago_days">%1$d d ago</string>
+    <string name="focus_on_but_gated">Focus is on but not working — fix the items below</string>
+    <string name="focus_launch_failed">Couldn\'t open that system settings page on this device — open it from the Settings app instead.</string>
 
     <!-- History screen -->
     <string name="history_title">History</string>
@@ -119,4 +121,5 @@
     <string name="history_empty_app">No notifications from this app</string>
     <string name="history_empty_batch">Nothing in this digest</string>
     <string name="history_loading">Loading…</string>
+    <string name="history_launch_failed">Couldn\'t open Notification access settings on this device — open it from the Settings app instead.</string>
 </resources>

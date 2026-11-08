@@ -55,6 +55,18 @@ permission still disables the toggle with its reason row even though the checkli
 Why: matches the spec ("shown until all four are true, then collapses; `setupDone` remembers
 dismissal") without a separate "dismiss" affordance that could hide an incomplete setup.
 
+**[2026-11-08] Only OFF → ON is gated; a gated-while-on Focus shows a red summary**
+What: the switch is enabled when Focus is already on or when no gate reason applies. If Focus
+is on and a gate reappears (access revoked, hold list emptied), the card shows "Focus is on but
+not working — fix the items below" in place of the next-digest line, with the reason rows under it.
+Why: an owner must always be able to turn Focus off; and an "on" state that holds nothing must
+say so rather than promise a digest time.
+
+**[2026-11-08] History paging is decided on the raw page, not the POSTED-filtered rows**
+What: `canLoadMore` compares the row count the query returned against the page size before
+REMOVED rows are dropped; the page size resets to 200 whenever the mode (query/app/batch) changes.
+Why: a page containing REMOVED rows would otherwise look shorter than full and end paging early.
+
 **[2026-11-08] App-only filter uses `search("", app)` rather than filtering `selectRecent` in memory**
 What: a chip with no query runs `search` with an empty needle and the package.
 Why: the result is bounded by that app's own most recent rows, not by the global page; the one

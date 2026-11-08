@@ -18,11 +18,13 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.Clock
 import java.time.ZoneId
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -64,7 +66,14 @@ data class FocusUiState(
     /** Last "Deliver now" outcome until dismissed. */
     val deliverResult: DeliverResult? = null,
 ) {
+    /** OFF → ON is allowed only when nothing gates it. */
     val canToggle: Boolean get() = !loading && gateReasons.isEmpty()
+
+    /** The switch itself: turning Focus OFF is always allowed, so a gated-while-on state can be exited. */
+    val switchEnabled: Boolean get() = !loading && (enabled || gateReasons.isEmpty())
+
+    /** Focus is on but a gate reappeared (access revoked, hold list emptied): nothing will be held/delivered. */
+    val onButGated: Boolean get() = enabled && gateReasons.isNotEmpty()
 }
 
 private data class Local(val delivering: Boolean = false, val deliverResult: DeliverResult? = null)
@@ -111,20 +120,29 @@ class FocusViewModel(
             build(s, held, sys, now, loc)
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), FocusUiState())
 
-    private suspend fun build(s: Settings, held: Long, sys: SystemSnapshot, now: Long, loc: Local): FocusUiState {
+    init {
+        // The checklist card collapses for good the first time every row is green. Kept out of the
+        // state combine so the derivation stays pure; a failed write just leaves the card for next time.
+        viewModelScope.launch {
+            combine(settings.settings, system) { s, sys -> !s.setupDone && checklistOf(s, sys).allDone }.first { it }
+            runCatching { settings.update { it.copy(setupDone = true) } }
+        }
+    }
+
+    private fun checklistOf(s: Settings, sys: SystemSnapshot) = Checklist(
+        listenerAccess = sys.listenerEnabled,
+        postPermission = sys.postNotificationsGranted,
+        batteryExempt = sys.batteryExempt,
+        holdListNonEmpty = s.holdPackages.isNotEmpty(),
+    )
+
+    private fun build(s: Settings, held: Long, sys: SystemSnapshot, now: Long, loc: Local): FocusUiState {
         val gate = buildList {
             if (!sys.listenerEnabled) add(GateReason.NO_LISTENER_ACCESS)
             if (!sys.postNotificationsGranted) add(GateReason.NO_POST_PERMISSION)
             if (s.holdPackages.isEmpty()) add(GateReason.EMPTY_HOLD_LIST)
         }
-        val checklist = Checklist(
-            listenerAccess = sys.listenerEnabled,
-            postPermission = sys.postNotificationsGranted,
-            batteryExempt = sys.batteryExempt,
-            holdListNonEmpty = s.holdPackages.isNotEmpty(),
-        )
-        // The card collapses for good the first time every row is green.
-        if (checklist.allDone && !s.setupDone) settings.update { it.copy(setupDone = true) }
+        val checklist = checklistOf(s, sys)
         val connectedAt = s.listenerConnectedAt
         val disconnectedAt = s.listenerDisconnectedAt
         val listener = if (connectedAt == null || (disconnectedAt != null && disconnectedAt > connectedAt)) {
@@ -165,8 +183,13 @@ class FocusViewModel(
         if (local.value.delivering) return
         viewModelScope.launch {
             local.update { it.copy(delivering = true, deliverResult = null) }
-            val result = runCatching { actions.deliverNow() }
-                .getOrElse { DeliverResult(0, it.message ?: it.javaClass.simpleName) }
+            val result = try {
+                actions.deliverNow()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                DeliverResult(0, e.message ?: e.javaClass.simpleName)
+            }
             local.update { it.copy(delivering = false, deliverResult = result) }
         }
     }

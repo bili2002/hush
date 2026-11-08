@@ -106,6 +106,30 @@ class FocusViewModelTest {
     }
 
     @Test
+    fun `focus already on with a gate reappearing is reported as on-but-gated and can still be switched off`() = runTest {
+        system.listener = false
+        val s = vm(FakeSettingsStore(Settings(focusEnabled = true, holdPackages = setOf("com.example.alpha")))).loaded()
+
+        assertTrue(s.enabled)
+        assertEquals(listOf(GateReason.NO_LISTENER_ACCESS), s.gateReasons)
+        assertTrue(s.onButGated)
+        assertFalse(s.canToggle, "OFF -> ON would still be refused")
+        assertTrue(s.switchEnabled, "but the switch stays usable so Focus can be turned off")
+    }
+
+    @Test
+    fun `switch is disabled only when off and gated`() = runTest {
+        system.postPermission = false
+        val off = vm(FakeSettingsStore(Settings(focusEnabled = false, holdPackages = setOf("com.example.alpha")))).loaded()
+        assertFalse(off.switchEnabled)
+        assertFalse(off.onButGated)
+
+        system.postPermission = true
+        val clear = vm(FakeSettingsStore(Settings(holdPackages = setOf("com.example.alpha")))).loaded()
+        assertTrue(clear.switchEnabled)
+    }
+
+    @Test
     fun `missing POST_NOTIFICATIONS gates the toggle`() = runTest {
         system.postPermission = false
         val s = vm().loaded()

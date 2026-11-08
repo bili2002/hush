@@ -1,7 +1,0 @@
-CREATE TABLE schema_meta (
-    key TEXT NOT NULL PRIMARY KEY,
-    value TEXT NOT NULL
-);
-
-selectMeta:
-SELECT value FROM schema_meta WHERE key = ?;

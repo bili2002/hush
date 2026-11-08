@@ -347,5 +347,21 @@ class ArchiveRoutesTest {
         assertNull(stored.appLabel)
     }
 
+    // ------------------------------------------------------------------ static page (issue #10)
+
+    @Test
+    fun `GET slash serves the search page without a token and the API stays gated`() = testApplication {
+        boot()
+        val page = client.get("/")
+        assertEquals(HttpStatusCode.OK, page.status)
+        assertTrue(page.contentType()?.match(ContentType.Text.Html) == true, "content type was ${page.contentType()}")
+        val html = page.bodyAsText()
+        assertTrue(html.contains("<title>Hush"), "page title missing")
+        assertTrue(html.contains("/notifications") && html.contains("/apps"), "page does not call the API")
+        // Mounting the static root did not widen the bearer gate.
+        assertEquals(HttpStatusCode.Unauthorized, client.get("/notifications").status)
+        assertEquals(HttpStatusCode.Unauthorized, client.get("/apps").status)
+    }
+
     private fun String.urlEncoded(): String = java.net.URLEncoder.encode(this, Charsets.UTF_8)
 }

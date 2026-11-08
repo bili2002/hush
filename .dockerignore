@@ -1,11 +1,11 @@
 # Build context for server/Dockerfile (repo root). Keep it small and secret-free.
 .git
 .gradle
-.kotlin
-.idea
+**/.kotlin
+**/.idea
 **/build
 worktrees
 *.env
 local.properties
-*.keystore
-*.jks
+**/*.keystore
+**/*.jks

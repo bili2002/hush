@@ -28,14 +28,15 @@ Paths on the host:
 
 ## One-time host setup
 
-1. **Token.** Generate it, store it, lock it down. Nothing prints it.
+1. **Token.** Generate it, store it, lock it down. The command never prints it, and it refuses
+   to overwrite an existing file (rotating the token means re-entering it on the phone).
    ```
-   mkdir -p ~/.config && umask 077
-   echo "HUSH_TOKEN=$(openssl rand -hex 32)" > ~/.config/hush-server.env
+   mkdir -p ~/.config
+   [ -e ~/.config/hush-server.env ] || (umask 077; echo "HUSH_TOKEN=$(openssl rand -hex 32)" > ~/.config/hush-server.env)
    chmod 600 ~/.config/hush-server.env
    ```
-   To put the same token on the phone later, read the file on the box
-   (`cat ~/.config/hush-server.env`) and type/paste it into Hush → Settings → Server → Token.
+   The token is never logged or echoed by any script. View it only when you need to paste it
+   into the app (`cat ~/.config/hush-server.env`, then Hush → Settings → Server → Token).
 2. **Data dir.** `mkdir -p ~/.local/share/hush-server` (the deploy script also creates it).
 3. **Deploy once** so the container exists: `./deploy-server.sh develop` from the repo root (see
    Deploy below).
@@ -102,13 +103,20 @@ newest rows may still be in the WAL. Use SQLite's online backup, which is safe w
 container is running:
 
 ```
-mkdir -p ~/backups/hush
-sqlite3 ~/.local/share/hush-server/hush.db ".backup ~/backups/hush/hush-$(date +%F).db"
+BACKUP_DIR="$HOME/backups/hush"; mkdir -p "$BACKUP_DIR"
+sqlite3 "$HOME/.local/share/hush-server/hush.db" ".backup $BACKUP_DIR/hush-$(date +%F).db"
 ```
 
-That produces one self-contained file (no `-wal`). Copy it off the box however you like. A cron
-line such as `17 4 * * * sqlite3 ... ".backup ..."` plus a `find -mtime +30 -delete` is all the
-retention the archive needs; the server keeps everything forever, the phone keeps 30 days.
+(`$HOME`, not `~`: neither bash nor sqlite3 expands a tilde inside double quotes, and sqlite3
+would silently create a directory literally named `~`.) That produces one self-contained file
+(no `-wal`). Copy it off the box however you like. A cron line is all the retention the archive
+needs — note that `%` must be escaped as `\%` in a crontab:
+
+```
+17 4 * * * sqlite3 "$HOME/.local/share/hush-server/hush.db" ".backup $HOME/backups/hush/hush-$(date +\%F).db" && find "$HOME/backups/hush" -name 'hush-*.db' -mtime +30 -delete
+```
+
+The server keeps everything forever, the phone keeps 30 days.
 
 If `sqlite3` is missing: `sudo apt install sqlite3`. Alternatively stop the container
 (`docker stop hush-server`), copy all three files `hush.db*`, `docker start hush-server`.
@@ -117,14 +125,16 @@ If `sqlite3` is missing: `sudo apt install sqlite3`. Alternatively stop the cont
 
 ```
 docker stop hush-server
-cd ~/.local/share/hush-server
-mv hush.db hush.db.broken-$(date +%F)        # keep the old one until the restore is verified
-rm -f hush.db-wal hush.db-shm                 # stale WAL from the old file must not be replayed
-cp ~/backups/hush/hush-2026-11-08.db hush.db
+cd ~/.local/share/hush-server && mv hush.db "hush.db.broken-$(date +%F)"   # keep it until verified
+cd ~/.local/share/hush-server && rm -f hush.db-wal hush.db-shm               # stale WAL must not be replayed
+cp ~/backups/hush/hush-2026-11-08.db ~/.local/share/hush-server/hush.db
+sqlite3 ~/.local/share/hush-server/hush.db "INSERT INTO notification_fts(notification_fts) VALUES('rebuild');"
 docker start hush-server
-sqlite3 hush.db "INSERT INTO notification_fts(notification_fts) VALUES('rebuild');"
 curl http://127.0.0.1:8082/health             # rows = what you expect from that backup
 ```
+
+(The `cd … &&` chains mean a typo in the path can never run `mv`/`rm` in the wrong directory. The
+rebuild runs before the server reopens the file so no request ever sees the stale index.)
 
 The **FTS rebuild line is mandatory** after a restore, and after any `VACUUM`: the search index
 is an external-content FTS5 table keyed on `notification`'s implicit rowid, and a rewritten file

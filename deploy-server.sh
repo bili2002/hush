@@ -9,7 +9,7 @@
 # as the invoking user so the SQLite file (WAL mode) stays owned by them. The bearer token lives
 # ONLY in $ENV_FILE (chmod 600) as HUSH_TOKEN=... and reaches the container via --env-file.
 # The container publishes on 127.0.0.1 ONLY; `tailscale serve` terminates TLS in front of it
-# (one-time host step, see STATUS.md "How to run"), so the phone talks HTTPS and the bearer is never
+# (one-time host step, see docs/ops.md "One-time host setup"), so the phone talks HTTPS and the bearer is never
 # in clear on the tailnet.
 set -euo pipefail
 cd "$(dirname "$0")"

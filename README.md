@@ -75,7 +75,6 @@ checklist and turns each row green as you complete it, so you can also just foll
 | "Can't reach server: …" | phone not on the tailnet, URL wrong, or `tailscale serve` not set up on the box | URL must be `https://serverche.tail8236e9.ts.net:8443` exactly (no path). On the box: `tailscale serve status` (see `docs/ops.md`). "Server not set up (optional)" just means URL or token is blank. |
 | Works for a day, then stops recording (Samsung, Xiaomi, Huawei, OnePlus…) | OEM background killer | don't swipe Hush away from Recents; App info → Battery → *Unrestricted* / disable "Put app to sleep"; Xiaomi: enable *Autostart* and lock the app in Recents. Hush rebinds the listener every 15 minutes by itself, but it cannot fight a force-stop. |
 | Reinstalled or cleared data; History is empty | phone DB and settings are gone | expected — the server kept everything (`/notifications` still returns it; the static search page on the server shows it). Re-enter URL + token and the hold list; the phone archive refills from new notifications only. |
-| Digest tap opens History but shows everything | the deep link filter was cleared by navigating | that is "Show all"; the chip "Held · delivered HH:MM" still marks the batch rows |
 
 ## Build
 ```
@@ -90,9 +89,9 @@ APK: `app/build/outputs/apk/debug/app-debug.apk`. `./publish-apk.sh develop` bui
 ./deploy-server.sh develop      # build origin/develop, replace the container, verify /health + auth
 ./deploy-server.sh --rollback   # back to the previous image, same verification
 ```
-One container on `127.0.0.1:8082`, one SQLite file in `~/.local/share/hush-server`, token in
-`~/.config/hush-server.env`, TLS via `tailscale serve` on 8443. Setup, backup, restore and the
-server-side troubleshooting table: **[`docs/ops.md`](docs/ops.md)**.
+One container, one SQLite file, bearer token from an env file, TLS via `tailscale serve`. Ports,
+paths, container flags, setup, backup, restore and the server-side troubleshooting table are all
+in **[`docs/ops.md`](docs/ops.md)** — that file is the single source for them.
 
 ## License
 MIT

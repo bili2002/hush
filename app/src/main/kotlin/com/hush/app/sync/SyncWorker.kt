@@ -40,16 +40,24 @@ class SyncWorker @AssistedInject constructor(
         val url = s.serverUrl.trim()
         val token = s.token.trim()
 
-        val result = if (url.isBlank() || token.isBlank()) {
-            // Unconfigured is not an error: the UI shows "Server not set up (optional)".
-            settings.update { it.copy(lastSyncError = null) }
-            Result.success()
-        } else {
-            pushAll(url, token, s.excludedPackages)
+        return try {
+            if (url.isBlank() || token.isBlank()) {
+                // Unconfigured is not an error: the UI shows "Server not set up (optional)".
+                settings.update { it.copy(lastSyncError = null) }
+                Result.success()
+            } else {
+                pushAll(url, token, s.excludedPackages)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // A bug or a DB failure must still leave a visible cause next to the retry button.
+            // failure(), not retry(): a deterministic error would only burn the backoff ladder.
+            Log.w(TAG, "sync failed: ${e::class.simpleName}: ${e.message}")
+            fail("Sync failed: ${e::class.simpleName}", retry = false)
+        } finally {
+            housekeeping()
         }
-
-        housekeeping()
-        return result
     }
 
     private suspend fun pushAll(url: String, token: String, excluded: Set<String>): Result {

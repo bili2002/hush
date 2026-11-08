@@ -5,7 +5,7 @@ Sync is implemented in `app/src/main/kotlin/com/hush/app/sync/`:
 - `SyncWorker` (`@HiltWorker`) runs every 15 minutes (`hush-sync`, `NetworkType.CONNECTED`,
   `ExistingPeriodicWorkPolicy.UPDATE`, registered by `SyncInitializer` via `@IntoSet AppInitializer`)
   and on demand through `SyncScheduler.syncNow()` (`WorkSyncScheduler`, unique one-time work
-  `hush-sync-now`, `KEEP`).
+  `hush-sync-now`, `REPLACE` so a tap always runs even while a previous attempt sits in backoff).
 - Push: `selectUnsynced(500)` → `POST {serverUrl}/notifications` with `Authorization: Bearer` →
   `markSynced` until the queue is empty. Body/response shapes are issue #8's exactly (`NotificationDto`,
   `PushRequest`, `PushResponse`, camelCase, `event` = `posted`/`removed`).
@@ -20,16 +20,16 @@ Sync is implemented in `app/src/main/kotlin/com/hush/app/sync/`:
   `SyncSchedulerTest` (`WorkManagerTestInitHelper`). Doze deferral of periodic work is accepted and
   not tested.
 
-**For the Focus issue (#4):** contribute the delivery safety net in `focus/FocusModule` with
+**For the Focus issue (#4):** contribute the delivery safety net in `focus/FocusModule` with an adapter
 
 ```kotlin
-@Binds
+@Provides
 @IntoSet
-abstract fun deliverDueHook(impl: <YourDeliverer>): com.hush.app.sync.DeliverDueHook
+fun deliverDueHook(d: Deliverer): com.hush.app.sync.DeliverDueHook = DeliverDueHook { d.deliverDue() }
 ```
 
-where `<YourDeliverer>` implements `fun interface DeliverDueHook { suspend fun deliverDue() }` and
-delivers only when a slot is actually due (not "deliver now"). No change to `sync/**` is needed.
+`Deliverer.deliverDue(force = false)` is the non-forced, due-rule path (not "deliver now"). No change to
+`sync/**` is needed.
 
 ## Decision
 
@@ -57,8 +57,10 @@ and a later change to client plugins cannot alter what the server receives.
 
 **[2026-11-08] Error mapping and the poison-batch rule**
 What: 2xx → `Ok`; 401/403 → `Unauthorized` → `Result.failure()`; other 4xx → `Rejected(server
-"error" field or "HTTP n")` → `Result.failure()`; 5xx / I/O / timeout / unparseable 2xx body →
-`Transient` → `Result.retry()` with exponential backoff. Progress from earlier batches in the same run
+"error" field or "HTTP n")` → `Result.failure()`; 3xx or an unusable URL → `Rejected("Check the server
+URL")`; 5xx (server "error" field or "HTTP n") / I/O / timeout / unparseable 2xx body → `Transient` →
+`Result.retry()` with exponential backoff. An exception escaping the push loop is recorded as
+`"Sync failed: <ExceptionName>"` with `Result.failure()`; housekeeping runs in `finally`. Progress from earlier batches in the same run
 stays marked synced; `lastSyncAt` moves only on a complete run.
 Why: a rejected batch cannot succeed by retrying (it would only burn the backoff ladder), so the periodic
 run simply tries again next cycle. An unparseable 2xx is retried because the server does `INSERT OR

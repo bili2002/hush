@@ -94,9 +94,18 @@ class HushApiTest {
     }
 
     @Test
-    fun `5xx maps to Transient`() = runTest {
+    fun `5xx maps to Transient and surfaces the server's reason`() = runTest {
         val r = api(HttpStatusCode.ServiceUnavailable, """{"error":"server not configured"}""").push("https://h", token, "d", items)
-        assertEquals(PushResult.SyncError.Transient("HTTP 503"), r)
+        assertEquals(PushResult.SyncError.Transient("server not configured"), r)
+        assertEquals(PushResult.SyncError.Transient("HTTP 502"), api(HttpStatusCode.BadGateway, "<html/>").push("https://h", token, "d", items))
+    }
+
+    @Test
+    fun `3xx and an unusable URL map to Rejected check-the-url`() = runTest {
+        val expected = PushResult.SyncError.Rejected("Check the server URL")
+        assertEquals(expected, api(HttpStatusCode.Found).push("https://h", token, "d", items))
+        assertEquals(expected, api(HttpStatusCode.OK, "{}").push("not a url at all", token, "d", items))
+        assertEquals(expected, api(HttpStatusCode.OK, "{}").push("", token, "d", items))
     }
 
     @Test

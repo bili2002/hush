@@ -1,6 +1,5 @@
 package com.hush.app.sync
 
-import android.app.Application
 import android.content.Context
 import android.provider.Settings as SystemSettings
 import org.robolectric.RuntimeEnvironment
@@ -22,14 +21,12 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.annotation.Config
 
 /**
- * The worker is built directly through a [WorkerFactory]; no Hilt, no WorkManager instance needed.
- * `application = Application::class` keeps the real HushApp (Hilt + WorkManager boot) out of these tests.
+ * The worker is built directly through a [WorkerFactory]; no Hilt, no WorkManager instance needed
+ * (robolectric.properties pins a plain Application, so HushApp's Hilt graph never boots here).
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(application = Application::class)
 class SyncWorkerTest {
 
     private val ctx: Context = RuntimeEnvironment.getApplication()
@@ -220,6 +217,18 @@ class SyncWorkerTest {
         api.reply = { PushResult.SyncError.Unauthorized }
         run()
         assertEquals(2, hook.calls)
+    }
+
+    @Test
+    fun `unexpected exception fails with a visible cause and still runs housekeeping`() {
+        seed(1)
+        api.reply = { error("boom") }
+
+        assertEquals(ListenableWorker.Result.failure(), run())
+
+        assertEquals("Sync failed: IllegalStateException", settings.state.value.lastSyncError)
+        assertEquals(1, hook.calls)
+        assertEquals(1L, unsynced())
     }
 
     @Test

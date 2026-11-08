@@ -39,11 +39,15 @@ object SyncRequests {
             .build()
 }
 
-/** "Sync now" from the UI. KEEP: a second tap while one is queued or running is a no-op. */
+/**
+ * "Sync now" from the UI. REPLACE: a tap must run immediately even if the previous one-time request is
+ * parked in retry backoff (KEEP would make the tap a silent no-op). Safe to replace a running one:
+ * rows are marked synced only after a 2xx and the server does INSERT OR IGNORE.
+ */
 class WorkSyncScheduler @Inject constructor(@ApplicationContext private val ctx: Context) : SyncScheduler {
     override fun syncNow() {
         WorkManager.getInstance(ctx)
-            .enqueueUniqueWork(SyncRequests.ONE_TIME_NAME, ExistingWorkPolicy.KEEP, SyncRequests.oneTime())
+            .enqueueUniqueWork(SyncRequests.ONE_TIME_NAME, ExistingWorkPolicy.REPLACE, SyncRequests.oneTime())
     }
 }
 

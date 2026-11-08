@@ -12,13 +12,12 @@ import androidx.work.testing.WorkManagerTestInitHelper
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(application = Application::class)
 class SyncSchedulerTest {
 
     private val ctx: Context = RuntimeEnvironment.getApplication()
@@ -52,6 +51,19 @@ class SyncSchedulerTest {
         assertEquals(1, infos.size)
         assertEquals(NetworkType.CONNECTED, infos.single().constraints.requiredNetworkType)
         assertTrue(infos.single().tags.contains(SyncWorker::class.java.name))
+    }
+
+    @Test
+    fun `syncNow replaces a parked request instead of keeping it`() {
+        val wm = WorkManager.getInstance(ctx)
+        WorkSyncScheduler(ctx).syncNow()
+        val first = wm.getWorkInfosForUniqueWork(SyncRequests.ONE_TIME_NAME).get().single().id
+
+        WorkSyncScheduler(ctx).syncNow()
+
+        val infos = wm.getWorkInfosForUniqueWork(SyncRequests.ONE_TIME_NAME).get()
+        assertEquals(1, infos.size)
+        assertNotEquals(first, infos.single().id)
     }
 
     @Test

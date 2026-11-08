@@ -8,6 +8,7 @@ import io.ktor.server.application.ApplicationStopped
 import io.ktor.server.application.install
 import io.ktor.server.application.log
 import io.ktor.server.engine.embeddedServer
+import io.ktor.server.http.content.staticResources
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.calllogging.CallLogging
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
@@ -39,6 +40,8 @@ fun Application.module(config: ServerConfig = ServerConfig.fromEnv()) {
     }
     install(StatusPages) { hushErrorPages() }
     routing {
+        // The search page (issue #10): open like /health; it calls the gated API with the bearer.
+        staticResources("/", "static")
         archiveRoutes(config, repo)
     }
 }

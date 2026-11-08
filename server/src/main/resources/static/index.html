@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hush archive</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f6f4;
+    --card: #ffffff;
+    --fg: #1c1c1a;
+    --muted: #6b6b66;
+    --line: #dcdcd7;
+    --accent: #2f6fde;
+    --accent-fg: #ffffff;
+    --mark: #ffe58a;
+    --mark-fg: #1c1c1a;
+    --error-bg: #fbe9e7;
+    --error-fg: #8a1f11;
+    --error-line: #e6a79e;
+    --ok-fg: #1f6b3a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141416;
+      --card: #1e1e21;
+      --fg: #ececea;
+      --muted: #9a9a94;
+      --line: #333338;
+      --accent: #6d9cf2;
+      --accent-fg: #0e1a30;
+      --mark: #8a6d00;
+      --mark-fg: #fff6d6;
+      --error-bg: #3a1a16;
+      --error-fg: #ffb4a6;
+      --error-line: #6e2b22;
+      --ok-fg: #7fd39b;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 16px;
+  }
+  main { max-width: 48rem; margin: 0 auto; }
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+  h1 { font-size: 1.35rem; margin: 0; }
+  header a { color: var(--muted); font-size: 0.9rem; }
+  form#filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  form#filters label { display: flex; flex-direction: column; gap: 2px; font-size: 0.8rem; color: var(--muted); flex: 1 1 10rem; }
+  form#filters label.q { flex: 2 1 100%; }
+  input, select, button {
+    font: inherit;
+    color: var(--fg);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 8px 10px;
+    min-width: 0;
+    width: 100%;
+  }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+  button:disabled { opacity: 0.55; cursor: default; }
+  form#filters .actions { display: flex; align-items: flex-end; flex: 1 1 8rem; }
+  #status { margin: 8px 0; color: var(--muted); min-height: 1.4em; }
+  #status.error {
+    background: var(--error-bg);
+    color: var(--error-fg);
+    border: 1px solid var(--error-line);
+    border-radius: 6px;
+    padding: 8px 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+  #status.error button { width: auto; padding: 4px 10px; }
+  ol#results { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  ol#results li {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 12px;
+    overflow-wrap: anywhere;
+  }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 0.85rem; color: var(--muted); }
+  .meta .app { color: var(--fg); font-weight: 600; }
+  .badge { border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; font-size: 0.75rem; }
+  .title { font-weight: 600; margin-top: 4px; }
+  .text { white-space: pre-wrap; margin-top: 2px; }
+  .sub { color: var(--muted); font-size: 0.9rem; margin-top: 2px; }
+  mark { background: var(--mark); color: var(--mark-fg); border-radius: 2px; padding: 0 1px; }
+  #more { margin: 12px 0; display: none; }
+  dialog {
+    background: var(--card);
+    color: var(--fg);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px;
+    width: min(92vw, 26rem);
+  }
+  dialog::backdrop { background: rgba(0,0,0,0.45); }
+  dialog h2 { margin: 0 0 8px; font-size: 1.1rem; }
+  dialog p { margin: 0 0 10px; color: var(--muted); font-size: 0.9rem; }
+  dialog p#tokenMsg { color: var(--error-fg); }
+  dialog p#health { font-size: 0.85rem; }
+  dialog p#health.ok { color: var(--ok-fg); }
+  dialog p#health.bad { color: var(--error-fg); }
+  dialog .row { display: flex; gap: 8px; margin-top: 10px; }
+  dialog .row button { flex: 1; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Hush archive</h1>
+    <a href="#" id="changeToken">change token</a>
+  </header>
+
+  <form id="filters" autocomplete="off">
+    <label class="q">Search
+      <input type="search" id="q" name="q" placeholder="Search title and text">
+    </label>
+    <label>App
+      <select id="app" name="app"><option value="">All apps</option></select>
+    </label>
+    <label>From
+      <input type="datetime-local" id="from" name="from">
+    </label>
+    <label>To
+      <input type="datetime-local" id="to" name="to">
+    </label>
+    <div class="actions"><button type="submit" class="primary" id="searchBtn">Search</button></div>
+  </form>
+
+  <div id="status" aria-live="polite"></div>
+  <ol id="results"></ol>
+  <button id="more">Load more</button>
+</main>
+
+<dialog id="tokenDialog">
+  <form method="dialog" id="tokenForm">
+    <h2>Server token</h2>
+    <p>Paste the server's <code>HUSH_TOKEN</code>. It is stored only in this browser.</p>
+    <p id="health"></p>
+    <p id="tokenMsg"></p>
+    <input type="password" id="tokenInput" placeholder="token" autocomplete="off" required>
+    <div class="row">
+      <button type="button" id="tokenCancel">Cancel</button>
+      <button type="submit" class="primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+(function () {
+  'use strict';
+  var STORAGE_KEY = 'hushToken';
+  var memToken = null;               // fallback when localStorage is unavailable (private mode)
+
+  var $ = function (id) { return document.getElementById(id); };
+  var qInput = $('q'), appSelect = $('app'), fromInput = $('from'), toInput = $('to');
+  var searchBtn = $('searchBtn'), statusEl = $('status'), resultsEl = $('results'), moreBtn = $('more');
+  var dialog = $('tokenDialog'), tokenInput = $('tokenInput'), tokenMsg = $('tokenMsg'), healthEl = $('health');
+
+  // ---------------------------------------------------------------- token
+
+  function getToken() {
+    try { return localStorage.getItem(STORAGE_KEY) || memToken; } catch (e) { return memToken; }
+  }
+  function setToken(t) {
+    memToken = t;
+    try { if (t) localStorage.setItem(STORAGE_KEY, t); else localStorage.removeItem(STORAGE_KEY); } catch (e) { /* in-memory only */ }
+  }
+
+  var pending = null;                // function to re-run once a token is saved
+
+  function openDialog(message, retry) {
+    tokenMsg.textContent = message || '';
+    tokenInput.value = '';
+    pending = retry || null;
+    $('tokenCancel').classList.toggle('hidden', !getToken());
+    healthEl.textContent = '';
+    healthEl.className = '';
+    if (!getToken()) probeHealth();
+    if (typeof dialog.showModal === 'function') {
+      if (!dialog.open) dialog.showModal();
+    } else {
+      dialog.setAttribute('open', '');
+    }
+    tokenInput.focus();
+  }
+  function closeDialog() {
+    if (typeof dialog.close === 'function' && dialog.open) dialog.close(); else dialog.removeAttribute('open');
+  }
+
+  // Unauthenticated: tells "server reachable, token missing" apart from "server down".
+  function probeHealth() {
+    healthEl.textContent = 'Checking server…';
+    fetch('/health', { cache: 'no-store' }).then(function (r) {
+      return r.json().then(function (body) {
+        if (r.ok && body && body.ok) {
+          healthEl.textContent = 'Server reachable (' + body.rows + ' rows archived). Token missing.';
+          healthEl.className = 'ok';
+        } else {
+          healthEl.textContent = 'Server answered HTTP ' + r.status + ' on /health.';
+          healthEl.className = 'bad';
+        }
+      }, function () {
+        healthEl.textContent = 'Server answered HTTP ' + r.status + ' on /health (not JSON).';
+        healthEl.className = 'bad';
+      });
+    }, function (err) {
+      healthEl.textContent = 'Server unreachable: ' + (err && err.message ? err.message : 'network error');
+      healthEl.className = 'bad';
+    });
+  }
+
+  $('tokenForm').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var t = tokenInput.value.trim();
+    if (!t) return;
+    setToken(t);
+    closeDialog();
+    var run = pending; pending = null;
+    loadApps();
+    if (run) run(); else search();
+  });
+  $('tokenCancel').addEventListener('click', function () { if (getToken()) closeDialog(); });
+  dialog.addEventListener('cancel', function (ev) { if (!getToken()) ev.preventDefault(); }); // Esc never traps the user into nothing
+  $('changeToken').addEventListener('click', function (ev) { ev.preventDefault(); openDialog('', null); });
+
+  // ---------------------------------------------------------------- api
+
+  function ApiError(status, message) { this.status = status; this.message = message; }
+
+  // Resolves with parsed JSON; rejects with ApiError (HTTP) or TypeError (network). 401 → clears the
+  // token and re-prompts, then rejects with status 401 so callers go quiet.
+  function api(path, signal, retry) {
+    var token = getToken();
+    if (!token) { openDialog('', retry); return Promise.reject(new ApiError(401, 'no token')); }
+    return fetch(path, { headers: { 'Authorization': 'Bearer ' + token }, signal: signal, cache: 'no-store' })
+      .then(function (r) {
+        if (r.status === 401) {
+          // Only wipe the token THIS request was sent with: a stale in-flight 401 must not clear
+          // (or re-prompt over) a token the user has entered since.
+          if (getToken() === token) {
+            setToken(null);
+            openDialog('Token rejected (401). Enter it again.', retry);
+          }
+          throw new ApiError(401, 'unauthorized');
+        }
+        return r.text().then(function (text) {
+          var body = null;
+          try { body = text ? JSON.parse(text) : null; } catch (e) { /* not JSON */ }
+          if (!r.ok) {
+            var cause = (body && body.error) ? body.error : (r.statusText || text.slice(0, 120) || 'no body');
+            throw new ApiError(r.status, cause);
+          }
+          return body;
+        });
+      });
+  }
+
+  // ---------------------------------------------------------------- state
+
+  function setStatus(text, kind, retry) {
+    statusEl.className = kind || '';
+    statusEl.textContent = '';
+    if (!text) return;
+    statusEl.appendChild(document.createTextNode(text));
+    if (retry) {
+      var b = document.createElement('button');
+      b.type = 'button'; b.textContent = 'Retry';
+      b.addEventListener('click', retry);
+      statusEl.appendChild(b);
+    }
+  }
+  function describe(err) {
+    if (err instanceof ApiError) return 'Error HTTP ' + err.status + ': ' + err.message;
+    return 'Network error: ' + (err && err.message ? err.message : String(err));
+  }
+  function setBusy(busy) {
+    searchBtn.disabled = busy;
+    moreBtn.disabled = busy;
+  }
+
+  // ---------------------------------------------------------------- apps
+
+  function loadApps() {
+    api('/apps', null, loadApps).then(function (apps) {
+      var current = appSelect.value;
+      while (appSelect.options.length > 1) appSelect.remove(1);
+      (apps || []).forEach(function (a) {
+        var o = document.createElement('option');
+        o.value = a.packageName;
+        o.textContent = (a.appLabel || a.packageName) + ' (' + a.count + ')';
+        appSelect.appendChild(o);
+      });
+      appSelect.value = current;
+      if (appSelect.value !== current) appSelect.value = '';
+    }, function (err) {
+      if (err instanceof ApiError && err.status === 401) return;
+      setStatus('Could not load app list. ' + describe(err), 'error', loadApps);
+    });
+  }
+
+  // ---------------------------------------------------------------- search
+
+  var current = { params: null, nextBefore: null, q: '' };
+  var controller = null;
+
+  function toMillis(input) {
+    if (!input.value) return null;
+    var ms = new Date(input.value).getTime();    // datetime-local is local time → epoch ms
+    return isNaN(ms) ? null : ms;
+  }
+  function buildParams() {
+    var p = new URLSearchParams();
+    var q = qInput.value.trim();
+    if (q) p.set('q', q);
+    if (appSelect.value) p.set('package', appSelect.value);
+    var from = toMillis(fromInput), to = toMillis(toInput);
+    if (from !== null) p.set('from', String(from));
+    if (to !== null) p.set('to', String(to));
+    return p;
+  }
+
+  function search() {
+    current = { params: buildParams(), nextBefore: null, q: qInput.value.trim() };
+    resultsEl.textContent = '';
+    moreBtn.style.display = 'none';
+    fetchPage(false);
+  }
+  function loadMore() { if (current.nextBefore !== null) fetchPage(true); }
+
+  function fetchPage(append) {
+    if (controller) controller.abort();
+    controller = new AbortController();
+    var signal = controller.signal;
+    var p = new URLSearchParams(current.params);
+    if (append && current.nextBefore !== null) p.set('before', String(current.nextBefore));
+    var retry = function () { fetchPage(append); };
+
+    setBusy(true);
+    setStatus('Loading…');
+    api('/notifications?' + p.toString(), signal, retry).then(function (page) {
+      if (signal.aborted) return;
+      var items = (page && page.items) || [];
+      if (!append) resultsEl.textContent = '';
+      items.forEach(function (it) { resultsEl.appendChild(renderItem(it, current.q)); });
+      current.nextBefore = (page && page.nextBefore != null) ? page.nextBefore : null;
+      moreBtn.style.display = current.nextBefore !== null ? 'block' : 'none';
+      if (resultsEl.children.length === 0) setStatus('No matches');
+      else setStatus(resultsEl.children.length + (current.nextBefore !== null ? '+ results' : ' results'));
+      setBusy(false);
+    }, function (err) {
+      if (signal.aborted || (err && err.name === 'AbortError')) return;
+      setBusy(false);
+      if (err instanceof ApiError && err.status === 401) { setStatus(''); return; }
+      setStatus(describe(err), 'error', retry);
+    });
+  }
+
+  // ---------------------------------------------------------------- render
+
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&quot;';
+    });
+  }
+  // Split the RAW text on the regex-quoted RAW query, escape every segment, wrap the matched ones in
+  // <mark>. Escaping per segment means the needle can never hit the inside of an entity (a query of
+  // "amp" must not corrupt "&amp;") and nothing raw ever reaches innerHTML.
+  function highlight(s, q) {
+    s = String(s);
+    if (!q) return esc(s);
+    var re = new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
+    var parts = s.split(re);      // capturing group → odd indexes are the matches
+    var out = '';
+    for (var i = 0; i < parts.length; i++) {
+      out += (i % 2 === 1) ? '<mark>' + esc(parts[i]) + '</mark>' : esc(parts[i]);
+    }
+    return out;
+  }
+  function renderItem(it, q) {
+    var li = document.createElement('li');
+    var when = new Date(it.postTime);
+    var html = '<div class="meta"><span class="app">' + esc(it.appLabel || it.packageName) + '</span>' +
+      '<span>' + esc(isNaN(when.getTime()) ? String(it.postTime) : when.toLocaleString()) + '</span>';
+    if (it.event && it.event !== 'posted') html += '<span class="badge">' + esc(it.event) + '</span>';
+    html += '</div>';
+    if (it.title) html += '<div class="title">' + highlight(it.title, q) + '</div>';
+    var body = it.bigText || it.text;
+    if (body) html += '<div class="text">' + highlight(body, q) + '</div>';
+    if (it.subText) html += '<div class="sub">' + highlight(it.subText, q) + '</div>';
+    li.innerHTML = html;
+    return li;
+  }
+
+  // ---------------------------------------------------------------- wire up
+
+  $('filters').addEventListener('submit', function (ev) { ev.preventDefault(); search(); });
+  appSelect.addEventListener('change', search);
+  moreBtn.addEventListener('click', loadMore);
+
+  if (getToken()) { loadApps(); search(); } else { openDialog('', null); }
+})();
+</script>
+</body>
+</html>

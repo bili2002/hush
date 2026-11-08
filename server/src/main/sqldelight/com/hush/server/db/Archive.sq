@@ -1,0 +1,59 @@
+-- The long-term notification archive (issue #8). One row per notification EVENT the phone saw;
+-- `id` is the phone's deterministic UUID, so a retried push lands on the same row (INSERT OR IGNORE).
+-- `IF NOT EXISTS` everywhere so a bootstrap that dies before `PRAGMA user_version` is stamped
+-- simply retries on the next start (see ArchiveDatabaseFactory).
+--
+-- The FTS5 index (`notification_fts`) and its content-sync triggers are NOT here: SQLDelight's
+-- SQLite dialect cannot parse `CREATE VIRTUAL TABLE ... USING fts5`, so ArchiveDatabaseFactory
+-- creates them with raw SQL on the driver right after this schema.
+CREATE TABLE IF NOT EXISTS notification (
+    id TEXT NOT NULL PRIMARY KEY,
+    device TEXT NOT NULL,
+    key TEXT NOT NULL,
+    package_name TEXT NOT NULL,
+    app_label TEXT,
+    post_time INTEGER NOT NULL,
+    title TEXT,
+    text TEXT,
+    big_text TEXT,
+    sub_text TEXT,
+    channel_id TEXT,
+    category TEXT,
+    flags INTEGER NOT NULL,
+    importance INTEGER,
+    event TEXT NOT NULL,
+    removed_reason INTEGER,
+    received_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS notification_post_time ON notification(post_time);
+CREATE INDEX IF NOT EXISTS notification_package_post_time ON notification(package_name, post_time);
+
+insertOrIgnore:
+INSERT OR IGNORE INTO notification (
+    id, device, key, package_name, app_label, post_time, title, text, big_text, sub_text,
+    channel_id, category, flags, importance, event, removed_reason, received_at
+) VALUES (
+    :id, :device, :key, :packageName, :appLabel, :postTime, :title, :text, :bigText, :subText,
+    :channelId, :category, :flags, :importance, :event, :removedReason, :receivedAt
+);
+
+-- Newest first, cursor on post_time (`before` is exclusive). Each optional filter is "absent OR
+-- matches" so one query serves every combination the GET route accepts.
+selectPage:
+SELECT * FROM notification
+WHERE (:packageName IS NULL OR package_name = :packageName)
+  AND (:from IS NULL OR post_time >= :from)
+  AND (:to IS NULL OR post_time <= :to)
+  AND post_time < :before
+ORDER BY post_time DESC
+LIMIT :limit;
+
+selectApps:
+SELECT package_name, MAX(app_label) AS app_label, COUNT(*) AS count, MAX(post_time) AS last_seen
+FROM notification
+GROUP BY package_name
+ORDER BY count DESC, package_name ASC;
+
+count:
+SELECT COUNT(*) FROM notification;

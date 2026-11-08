@@ -248,8 +248,12 @@
     return fetch(path, { headers: { 'Authorization': 'Bearer ' + token }, signal: signal, cache: 'no-store' })
       .then(function (r) {
         if (r.status === 401) {
-          setToken(null);
-          openDialog('Token rejected (401). Enter it again.', retry);
+          // Only wipe the token THIS request was sent with: a stale in-flight 401 must not clear
+          // (or re-prompt over) a token the user has entered since.
+          if (getToken() === token) {
+            setToken(null);
+            openDialog('Token rejected (401). Enter it again.', retry);
+          }
           throw new ApiError(401, 'unauthorized');
         }
         return r.text().then(function (text) {
@@ -371,13 +375,19 @@
       return c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&quot;';
     });
   }
-  // Escape FIRST, then highlight the escaped query inside the escaped text, so nothing raw ever
-  // reaches innerHTML. The query is escaped the same way so it matches what is now in the string.
+  // Split the RAW text on the regex-quoted RAW query, escape every segment, wrap the matched ones in
+  // <mark>. Escaping per segment means the needle can never hit the inside of an entity (a query of
+  // "amp" must not corrupt "&amp;") and nothing raw ever reaches innerHTML.
   function highlight(s, q) {
-    var safe = esc(s);
-    if (!q) return safe;
-    var needle = esc(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return safe.replace(new RegExp(needle, 'gi'), function (m) { return '<mark>' + m + '</mark>'; });
+    s = String(s);
+    if (!q) return esc(s);
+    var re = new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
+    var parts = s.split(re);      // capturing group → odd indexes are the matches
+    var out = '';
+    for (var i = 0; i < parts.length; i++) {
+      out += (i % 2 === 1) ? '<mark>' + esc(parts[i]) + '</mark>' : esc(parts[i]);
+    }
+    return out;
   }
   function renderItem(it, q) {
     var li = document.createElement('li');

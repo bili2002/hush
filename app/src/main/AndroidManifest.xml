@@ -55,5 +55,20 @@
         </provider>
 
         <!-- focus receivers (#FOCUS) -->
+        <!-- Slot alarm target; only our own explicit PendingIntent fires it. -->
+        <receiver
+            android:name=".focus.DeliveryReceiver"
+            android:exported="false" />
+        <!-- System broadcasts reach non-exported receivers (same pattern as WorkManager's RescheduleReceiver). -->
+        <receiver
+            android:name=".focus.RescheduleReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.TIME_SET" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

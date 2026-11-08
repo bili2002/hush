@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="focus_channel_name">Held notification digests</string>
+    <string name="focus_channel_description">One summary per slot of the notifications Focus held back</string>
+    <plurals name="focus_digest_title">
+        <item quantity="one">%d held notification</item>
+        <item quantity="other">%d held notifications</item>
+    </plurals>
+    <string name="focus_digest_since">since %1$s</string>
+    <string name="focus_digest_no_text">(no text)</string>
+    <string name="focus_error_no_hold_apps">Add at least one app to hold</string>
+    <string name="focus_error_notifications_denied">Notifications permission denied — digests can\'t be shown</string>
+</resources>

@@ -22,10 +22,13 @@ ANDROID_HOME="${ANDROID_HOME:-$HOME/android-sdk}"
 export JAVA_HOME ANDROID_HOME
 
 TAILSCALE_IP="${TAILSCALE_IP:-100.102.96.122}"   # serverche on the tailnet
-PORT="${APK_PORT:-8081}"                          # the one APK host; shared with tracker-app
+# The host is SHARED with tracker-app: one container serves the whole root. Port, root and this
+# app's dir are therefore fixed, not env-overridable — a hush publish must never re-home the
+# container or land a build outside the tree it serves.
+PORT=8081
 APP_SLUG="hush"                                   # this app's dir + URL path under the host root
-HOST_ROOT="${APK_HOST_ROOT:-$HOME/apk-host}"      # what the container serves (all apps)
-HOST_DIR="${APK_HOST_DIR:-$HOST_ROOT/$APP_SLUG}"  # where THIS app's builds live
+HOST_ROOT="$HOME/apk-host"                        # what the container serves (all apps)
+HOST_DIR="$HOST_ROOT/$APP_SLUG"                   # where THIS app's builds live
 CONTAINER="tracker-apk"                           # one container serves every app; its name predates the multi-app layout
 RENDER_BIN="${APK_RENDER_BIN:-$HOME/.claude/bin}" # apk-app-index.sh + apk-host-index.sh
 KEEP="${APK_KEEP:-10}"
@@ -56,6 +59,10 @@ echo ">> Building :app:assembleDebug ${LABEL:+($LABEL)} ..."
 
 APK_DIR="$HOST_DIR/apks"; MANIFEST="$HOST_DIR/builds.tsv"
 mkdir -p "$APK_DIR"
+# What the root page shows for this app (name + one-line blurb); rewritten on every publish so it
+# is always present and current. The per-app renderer takes its title from here too.
+printf 'name=Hush\nblurb=Notification ledger + Focus mode: records every notification, hourly digest for held apps\n' \
+    > "$HOST_DIR/app.meta.tmp" && mv -f "$HOST_DIR/app.meta.tmp" "$HOST_DIR/app.meta"
 TS="$(date '+%Y%m%d-%H%M%S')"
 SHA="$(git -C "$BUILD_DIR" rev-parse --short HEAD 2>/dev/null || echo nogit)"
 BUILT_AT="$(date '+%Y-%m-%d %H:%M:%S %Z')"
@@ -99,15 +106,21 @@ fi
 # Regenerate this app's page (newest build at the top) and the root page listing every app.
 # Both renderers live in the dotclaude repo; a missing one is a warning, never a failed publish:
 # the APK is already in place and latest.apk already points at it.
+render_warn() { # the pages may be stale, but the APK is published: say where it is
+    echo "warning: $1" >&2
+    echo "         the build itself is live at http://$TAILSCALE_IP:$PORT/$APP_SLUG/latest.apk" >&2
+}
 if [[ -x "$RENDER_BIN/apk-app-index.sh" ]]; then
-    "$RENDER_BIN/apk-app-index.sh" "$HOST_DIR" "Hush"
+    "$RENDER_BIN/apk-app-index.sh" "$HOST_DIR" \
+        || render_warn "apk-app-index.sh failed — $HOST_DIR/index.html NOT regenerated"
 else
-    echo "warning: $RENDER_BIN/apk-app-index.sh not found — $HOST_DIR/index.html NOT regenerated (pull the dotclaude repo)" >&2
+    render_warn "$RENDER_BIN/apk-app-index.sh not found (pull the dotclaude repo) — $HOST_DIR/index.html NOT regenerated"
 fi
 if [[ -x "$RENDER_BIN/apk-host-index.sh" ]]; then
-    "$RENDER_BIN/apk-host-index.sh" "$HOST_ROOT"
+    "$RENDER_BIN/apk-host-index.sh" "$HOST_ROOT" \
+        || render_warn "apk-host-index.sh failed — $HOST_ROOT/index.html (app list) NOT regenerated"
 else
-    echo "warning: $RENDER_BIN/apk-host-index.sh not found — $HOST_ROOT/index.html (app list) NOT regenerated" >&2
+    render_warn "$RENDER_BIN/apk-host-index.sh not found (pull the dotclaude repo) — $HOST_ROOT/index.html (app list) NOT regenerated"
 fi
 
 if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then

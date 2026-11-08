@@ -10,7 +10,7 @@ both green on serverche and in CI. No features yet; the MVP backlog is filed as 
 ```
 export JAVA_HOME=~/toolchain/jdk-17.0.13+11 ANDROID_HOME=~/android-sdk
 ./gradlew :server:test :app:testDebugUnitTest :app:assembleDebug     # green gate
-./publish-apk.sh develop     # → http://100.102.96.122:8081/hush/  (serverche:8081 on the tailnet)
+./publish-apk.sh develop     # → http://100.102.96.122:8083/  (serverche:8083 on the tailnet)
 ./deploy-server.sh develop   # → container hush-server on 127.0.0.1:8082, data in ~/.local/share/hush-server
 ```
 
@@ -21,9 +21,7 @@ export JAVA_HOME=~/toolchain/jdk-17.0.13+11 ANDROID_HOME=~/android-sdk
   tailscaled resumes it across reboots. The phone then uses
   `https://serverche.tail8236e9.ts.net:8443` as the server URL in Settings. (tracker-server owns
   port 443.)
-- APK host: `publish-apk.sh` writes to `~/apk-host/hush/` under the shared multi-app host (nginx
-  container `tracker-apk`, tailnet IP port 8081, shared with tracker-app); `http://100.102.96.122:8081/`
-  lists every app. Pages are rendered by `~/.claude/bin/apk-app-index.sh` + `apk-host-index.sh`.
+- APK host: `publish-apk.sh` starts an nginx container `hush-apk` on the tailnet IP, port 8083.
 - Sideloaded APKs on Android 13+: before Notification access can be granted, open App info → ⋮ →
   "Allow restricted settings". `adb install` avoids that step.
 

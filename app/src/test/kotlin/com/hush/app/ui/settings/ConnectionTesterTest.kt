@@ -10,6 +10,8 @@ import io.ktor.client.request.HttpResponseData
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.nio.channels.UnresolvedAddressException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -24,12 +26,12 @@ class ConnectionTesterTest {
         ConnectionTester(HttpClient(MockEngine { request -> handler(request) }))
 
     @Test
-    fun `hits health with the bearer and trims a trailing slash`() = runTest {
+    fun `hits the gated apps route with the bearer and trims a trailing slash`() = runTest {
         var seen: HttpRequestData? = null
         val tester = tester { seen = it; respond("""{"ok":true}""") }
 
         assertEquals(TestResult.Ok, tester.test("https://example.invalid:8443/", token))
-        assertEquals("https://example.invalid:8443/health", seen!!.url.toString())
+        assertEquals("https://example.invalid:8443/apps", seen!!.url.toString())
         assertEquals("Bearer $token", seen!!.headers[HttpHeaders.Authorization])
     }
 
@@ -40,17 +42,30 @@ class ConnectionTesterTest {
     }
 
     @Test
-    fun `other statuses are Unreachable with the code`() = runTest {
+    fun `503 is the server's fail-closed no-token state`() = runTest {
         val tester = tester { respondError(HttpStatusCode.ServiceUnavailable) }
-        assertEquals(TestResult.Unreachable("HTTP 503"), tester.test("https://example.invalid", token))
+        assertEquals(TestResult.ServerNotConfigured, tester.test("https://example.invalid", token))
+    }
+
+    @Test
+    fun `other statuses are Unreachable with the code`() = runTest {
+        val tester = tester { respondError(HttpStatusCode.BadGateway) }
+        assertEquals(TestResult.Unreachable("HTTP 502"), tester.test("https://example.invalid", token))
+    }
+
+    @Test
+    fun `common transport failures become plain words`() = runTest {
+        assertEquals(TestResult.Unreachable("host not found"), tester { throw UnresolvedAddressException() }.test("https://nope.invalid", token))
+        assertEquals(TestResult.Unreachable("connection refused"), tester { throw ConnectException("Connection refused") }.test("https://example.invalid", token))
+        assertEquals(TestResult.Unreachable("timed out"), tester { throw SocketTimeoutException("Read timed out") }.test("https://example.invalid", token))
     }
 
     @Test
     fun `transport failure is Unreachable with the cause and never the token`() = runTest {
-        val tester = tester { throw ConnectException("Connection refused") }
+        val tester = tester { throw IllegalStateException("TLS handshake failed") }
         val result = tester.test("https://example.invalid", token)
         assertIs<TestResult.Unreachable>(result)
-        assertEquals("Connection refused", result.cause)
+        assertEquals("TLS handshake failed", result.cause)
         assertFalse(result.toString().contains(token))
     }
 

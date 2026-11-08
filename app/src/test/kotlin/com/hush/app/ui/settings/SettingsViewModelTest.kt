@@ -4,6 +4,7 @@ import com.hush.app.settings.Settings
 import com.hush.app.settings.SettingsStore
 import com.hush.app.sync.SyncScheduler
 import com.hush.app.testing.FakeSettingsStore
+import com.hush.app.testing.MainDispatcherRule
 import com.hush.app.testing.event
 import com.hush.app.testing.fixedClock
 import com.hush.app.testing.testRepository
@@ -112,17 +113,17 @@ class SettingsViewModelTest {
 
         vm.onUrlChange("https://a")
         advanceTimeBy(100)
-        vm.onUrlChange("https://ab")
+        vm.onUrlChange("  https://ab ")
         advanceTimeBy(100)
-        vm.onTokenChange("synthetic")
+        vm.onTokenChange(" synthetic\n")
         assertEquals("", fake.state.value.serverUrl, "nothing written before the debounce elapses")
 
         advanceTimeBy(600)
         runCurrent()
-        assertEquals("https://ab", fake.state.value.serverUrl)
-        assertEquals("synthetic", fake.state.value.token)
+        assertEquals("https://ab", fake.state.value.serverUrl, "saved trimmed")
+        assertEquals("synthetic", fake.state.value.token, "saved trimmed")
         assertEquals(1, store.writes)
-        assertEquals("https://ab", vm.state.value.serverUrl, "local field keeps the typed value")
+        assertEquals("  https://ab ", vm.state.value.serverUrl, "local field keeps the typed value")
     }
 
     @Test
@@ -154,6 +155,7 @@ class SettingsViewModelTest {
         val vm = viewModel(store, probe = probe)
         assertEquals(ListenerState.NotEnabled, vm.state.first { it.loaded }.listener)
         assertFalse(vm.state.value.batteryExempt)
+        assertEquals(now, vm.state.value.nowMillis, "ages are measured from the last probe")
 
         probe.listenerEnabled = true
         probe.batteryExempt = true

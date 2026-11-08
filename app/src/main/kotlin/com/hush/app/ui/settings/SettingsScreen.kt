@@ -1,5 +1,6 @@
 package com.hush.app.ui.settings
 
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.provider.Settings
 import androidx.compose.foundation.clickable
@@ -37,6 +38,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -79,12 +83,20 @@ fun SettingsScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    // Some OEM builds lack one of these settings screens; say so instead of silently doing nothing.
+    var openError by remember { mutableStateOf<String?>(null) }
     fun open(action: String) {
-        runCatching { context.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        try {
+            context.startActivity(Intent(action))
+            openError = null
+        } catch (e: ActivityNotFoundException) {
+            openError = action.substringAfterLast('.')
+        }
     }
 
     SettingsContent(
         state = state,
+        openError = openError,
         callbacks = SettingsCallbacks(
             onUrlChange = viewModel::onUrlChange,
             onTokenChange = viewModel::onTokenChange,
@@ -115,7 +127,12 @@ data class SettingsCallbacks(
 )
 
 @Composable
-fun SettingsContent(state: SettingsUiState, callbacks: SettingsCallbacks, modifier: Modifier = Modifier) {
+fun SettingsContent(
+    state: SettingsUiState,
+    callbacks: SettingsCallbacks,
+    modifier: Modifier = Modifier,
+    openError: String? = null,
+) {
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -124,6 +141,13 @@ fun SettingsContent(state: SettingsUiState, callbacks: SettingsCallbacks, modifi
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text(stringResource(R.string.settings_title), style = MaterialTheme.typography.headlineSmall)
+        if (openError != null) {
+            Text(
+                stringResource(R.string.settings_open_failed, openError),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
         ServerCard(state, callbacks)
         ListenerCard(state, callbacks)
         BatteryCard(state, callbacks)
@@ -204,6 +228,8 @@ private fun TestResultLine(result: TestResult) {
     val (text, color) = when (result) {
         TestResult.Ok -> stringResource(R.string.settings_server_test_ok) to okColor()
         TestResult.WrongToken -> stringResource(R.string.settings_server_test_wrong_token) to MaterialTheme.colorScheme.error
+        TestResult.ServerNotConfigured ->
+            stringResource(R.string.settings_server_test_not_configured) to MaterialTheme.colorScheme.error
         is TestResult.Unreachable ->
             stringResource(R.string.settings_server_test_unreachable, result.cause) to MaterialTheme.colorScheme.error
     }

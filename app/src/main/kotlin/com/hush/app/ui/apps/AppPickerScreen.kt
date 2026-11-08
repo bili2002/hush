@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -86,9 +87,12 @@ fun AppPickerContent(
         PickerList.HOLD -> stringResource(R.string.apps_subtitle_hold)
         PickerList.EXCLUDED -> stringResource(R.string.apps_subtitle_excluded)
     }
+    // The shell's Scaffold already consumed the status-bar inset; zero both so the bar is not padded twice.
     Scaffold(
+        contentWindowInsets = WindowInsets(0),
         topBar = {
             TopAppBar(
+                windowInsets = WindowInsets(0),
                 title = {
                     Column {
                         Text(title)

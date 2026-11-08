@@ -7,7 +7,7 @@ import com.hush.app.testing.FakeSettingsStore
 import com.hush.app.testing.event
 import com.hush.app.testing.testRepository
 import com.hush.app.ui.Routes
-import com.hush.app.ui.settings.MainDispatcherRule
+import com.hush.app.testing.MainDispatcherRule
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

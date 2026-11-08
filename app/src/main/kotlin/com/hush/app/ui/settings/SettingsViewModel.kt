@@ -43,11 +43,13 @@ class SettingsViewModel @Inject constructor(
         val testResult: TestResult? = null,
         val listenerEnabled: Boolean = false,
         val batteryExempt: Boolean = false,
+        /** When the probes last ran; also the "now" for "2 min ago", so a resume re-renders the ages. */
+        val probedAt: Long = 0,
     )
 
     private data class ServerFields(val url: String, val token: String)
 
-    private val local = MutableStateFlow(Local())
+    private val local = MutableStateFlow(Local(probedAt = clock.millis()))
 
     /** Edited URL/token waiting for the 500 ms debounce before they hit the store. */
     private val pendingWrite = MutableStateFlow<ServerFields?>(null)
@@ -69,12 +71,11 @@ class SettingsViewModel @Inject constructor(
                 holdCount = s.holdPackages.size,
                 excludedCount = s.excludedPackages.size,
                 logOngoing = s.logOngoing,
-                nowMillis = clock.millis(),
+                nowMillis = l.probedAt,
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
     init {
-        refreshSystemState()
         viewModelScope.launch {
             val s = settingsStore.current()
             lastWritten = ServerFields(s.serverUrl, s.token)
@@ -91,17 +92,19 @@ class SettingsViewModel @Inject constructor(
     fun onTokenChange(value: String) = editServer { it.copy(token = value) }
 
     private inline fun editServer(change: (Local) -> Local) {
-        val l = local.updateAndGet(change)
-        pendingWrite.value = ServerFields(l.url, l.token)
+        pendingWrite.value = local.updateAndGet(change).serverFields()
     }
+
+    /** The one place URL and token are trimmed, so "Test connection" and the saved values are identical. */
+    private fun Local.serverFields() = ServerFields(url.trim(), token.trim())
 
     fun toggleTokenVisible() = local.update { it.copy(tokenVisible = !it.tokenVisible) }
 
     fun testConnection() {
-        val l = local.value
+        val fields = local.value.serverFields()
         viewModelScope.launch {
             local.update { it.copy(testing = true, testResult = null) }
-            val result = connectionTester.test(l.url, l.token)
+            val result = connectionTester.test(fields.url, fields.token)
             local.update { it.copy(testing = false, testResult = result) }
         }
     }
@@ -112,14 +115,19 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { settingsStore.update { it.copy(logOngoing = enabled) } }
     }
 
-    /** Called from `init` and on every `ON_RESUME`: the user may have just come back from system settings. */
+    /**
+     * Called on every `ON_RESUME` (which includes first composition): the user may have just come back from
+     * system settings. [Local.probedAt] changes each time, so the state re-emits even when the probes did not.
+     */
     fun refreshSystemState() {
-        local.update { it.copy(listenerEnabled = probe.isListenerEnabled(), batteryExempt = probe.isBatteryExempt()) }
+        local.update {
+            it.copy(listenerEnabled = probe.isListenerEnabled(), batteryExempt = probe.isBatteryExempt(), probedAt = clock.millis())
+        }
     }
 
     private suspend fun write(fields: ServerFields) {
         if (fields == lastWritten) return
-        settingsStore.update { it.copy(serverUrl = fields.url.trim(), token = fields.token.trim()) }
+        settingsStore.update { it.copy(serverUrl = fields.url, token = fields.token) }
         lastWritten = fields
     }
 

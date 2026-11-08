@@ -4,6 +4,7 @@
 
     <!-- Settings screen (#7) -->
     <string name="settings_title">Settings</string>
+    <string name="settings_open_failed">Couldn\'t open the system screen (%1$s is missing on this phone)</string>
     <string name="settings_server_title">Server</string>
     <string name="settings_server_url_label">Server URL</string>
     <string name="settings_server_url_placeholder">https://serverche.tail8236e9.ts.net:8443</string>
@@ -14,6 +15,7 @@
     <string name="settings_server_sync_now">Sync now</string>
     <string name="settings_server_test_ok">OK</string>
     <string name="settings_server_test_wrong_token">Wrong token (401)</string>
+    <string name="settings_server_test_not_configured">Server not configured (no token on server)</string>
     <string name="settings_server_test_unreachable">Can\'t reach server: %1$s</string>
     <string name="settings_server_status_not_configured">Server not set up (optional)</string>
     <string name="settings_server_status_ok">Last sync %1$s · ok</string>

@@ -2,8 +2,9 @@
 
 Screens B (#7) landed: the real **Settings** tab (`ui/settings/`) and the **app picker**
 (`ui/apps/`, route `apps/{list}`). Settings has four cards: Server (URL + masked token, 500 ms
-debounced into `SettingsStore`; "Test connection" = `GET {url}/health` with the bearer through the
-shared `HttpClient`; "Sync now" → `SyncScheduler.syncNow()`; status line from `lastSyncAt` /
+debounced into `SettingsStore`; "Test connection" = `GET {url}/apps` with the bearer through the
+shared `HttpClient` (a gated route: 200 ok, 401 wrong token, 503 server has no token; `/health` is
+open and would say OK to any token); "Sync now" → `SyncScheduler.syncNow()`; status line from `lastSyncAt` /
 `lastSyncError` plus `countUnsynced()`), Listener (state from `listenerConnectedAt` /
 `listenerDisconnectedAt` + `NotificationManagerCompat.getEnabledListenerPackages`, opens
 `ACTION_NOTIFICATION_LISTENER_SETTINGS`, sideload hint only while not enabled), Battery
@@ -30,6 +31,12 @@ What: "enabled" = our package is in `Settings.Secure.enabled_notification_listen
 service class.
 Why: the service class belongs to the listener issue, which is built in parallel; the package-level
 check is what the system actually keys the toggle on and needs no cross-issue type.
+
+**[2026-11-08] "Test connection" probes a gated route, not `/health`**
+What: the Settings probe is `GET /apps` with the bearer; `/health` stays the unauthenticated liveness
+check for deploy scripts.
+Why: `/health` answers 200 to any token, so it cannot tell "wrong token" from "ok". `/apps` is cheap,
+read-only, and exercises exactly the auth path sync uses, including the server's fail-closed 503.
 
 **[2026-11-08] Hush itself is filtered out of the app picker**
 What: `PackageManagerAppsSource` drops `ctx.packageName`.

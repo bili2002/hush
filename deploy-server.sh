@@ -14,7 +14,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 REPO_ROOT="$PWD"
 
-SERVER_PORT="${SERVER_PORT:-8082}"          # 8080 = tracker-server, 8081/8083 = apk hosts
+SERVER_PORT="${SERVER_PORT:-8082}"          # 8080 = tracker-server, 8081 = apk host (all apps)
 CONTAINER="hush-server"; IMAGE="hush-server"
 ENV_FILE="${HUSH_ENV_FILE:-$HOME/.config/hush-server.env}"
 DATA_DIR="${HUSH_DATA_DIR:-$HOME/.local/share/hush-server}"

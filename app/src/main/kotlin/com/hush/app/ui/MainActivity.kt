@@ -93,12 +93,15 @@ fun HushRoot() {
         ) {
             composable(Routes.HISTORY) { HistoryScreen() }
             composable(Routes.FOCUS) { FocusScreen() }
-            composable(Routes.SETTINGS) { SettingsScreen() }
+            composable(Routes.SETTINGS) { SettingsScreen(onOpenPicker = { navController.navigate(it) }) }
             composable(
                 Routes.APP_PICKER_PATTERN,
                 arguments = listOf(navArgument(Routes.ARG_LIST) { type = NavType.StringType }),
             ) { entry ->
-                AppPickerScreen(list = entry.arguments?.getString(Routes.ARG_LIST).orEmpty())
+                AppPickerScreen(
+                    list = entry.arguments?.getString(Routes.ARG_LIST).orEmpty(),
+                    onBack = { navController.popBackStack() },
+                )
             }
         }
     }

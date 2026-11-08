@@ -1,4 +1,67 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Hush</string>
+
+    <!-- Settings screen (#7) -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_open_failed">Couldn\'t open the system screen (%1$s is missing on this phone)</string>
+    <string name="settings_server_title">Server</string>
+    <string name="settings_server_url_label">Server URL</string>
+    <string name="settings_server_url_placeholder">https://serverche.tail8236e9.ts.net:8443</string>
+    <string name="settings_server_token_label">Bearer token</string>
+    <string name="settings_server_token_show">Show token</string>
+    <string name="settings_server_token_hide">Hide token</string>
+    <string name="settings_server_test">Test connection</string>
+    <string name="settings_server_sync_now">Sync now</string>
+    <string name="settings_server_test_ok">OK</string>
+    <string name="settings_server_test_wrong_token">Wrong token (401)</string>
+    <string name="settings_server_test_not_configured">Server not configured (no token on server)</string>
+    <string name="settings_server_test_unreachable">Can\'t reach server: %1$s</string>
+    <string name="settings_server_status_not_configured">Server not set up (optional)</string>
+    <string name="settings_server_status_ok">Last sync %1$s · ok</string>
+    <string name="settings_server_status_error_with_time">Last sync %1$s · failed: %2$s</string>
+    <string name="settings_server_status_error">Sync failed: %1$s</string>
+    <string name="settings_server_status_never">Not synced yet</string>
+    <string name="settings_server_unsynced">%1$d not yet synced</string>
+
+    <string name="settings_listener_title">Notification access</string>
+    <string name="settings_listener_connected">Connected %1$s</string>
+    <string name="settings_listener_disconnected">Disconnected %1$s</string>
+    <string name="settings_listener_not_enabled">Not enabled</string>
+    <string name="settings_listener_enabled_waiting">Enabled, waiting for the system to connect…</string>
+    <string name="settings_listener_open">Open notification access</string>
+    <string name="settings_listener_sideload_hint">If the toggle is greyed out: tap it once, then App info → ⋮ → Allow restricted settings (may be missing on some phones; adb install avoids it).</string>
+
+    <string name="settings_battery_title">Battery</string>
+    <string name="settings_battery_exempt">Exempt from battery optimisation</string>
+    <string name="settings_battery_not_exempt">Not exempt from battery optimisation</string>
+    <string name="settings_battery_open">Open battery settings</string>
+    <string name="settings_battery_note">Even when exempt, the digest may arrive a few minutes late while the phone is in deep sleep.</string>
+
+    <string name="settings_apps_title">Apps</string>
+    <string name="settings_apps_hold">Hold list (%1$d)</string>
+    <string name="settings_apps_hold_desc">Held during Focus, delivered as one digest</string>
+    <string name="settings_apps_excluded">Excluded apps (%1$d)</string>
+    <string name="settings_apps_excluded_desc">Never recorded</string>
+    <string name="settings_apps_log_ongoing">Log ongoing notifications</string>
+    <string name="settings_apps_log_ongoing_desc">Media, downloads and other persistent notifications</string>
+
+    <string name="settings_ago_just_now">just now</string>
+    <string name="settings_ago_minutes">%1$d min ago</string>
+    <string name="settings_ago_hours">%1$d h ago</string>
+    <string name="settings_ago_days">%1$d d ago</string>
+
+    <!-- App picker (#7) -->
+    <string name="apps_title_hold">Hold list</string>
+    <string name="apps_title_excluded">Excluded apps</string>
+    <string name="apps_subtitle_hold">Held during Focus mode</string>
+    <string name="apps_subtitle_excluded">Never recorded by Hush</string>
+    <string name="apps_search">Search apps</string>
+    <string name="apps_clear_search">Clear search</string>
+    <string name="apps_loading">Scanning installed apps…</string>
+    <string name="apps_no_matches">No matches</string>
+    <string name="apps_empty">No apps found</string>
+    <string name="apps_back">Back</string>
+    <string name="apps_load_error">Couldn\'t list installed apps: %1$s</string>
+    <string name="apps_selected_count">%1$d selected</string>
 </resources>

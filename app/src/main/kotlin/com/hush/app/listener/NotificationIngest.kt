@@ -3,6 +3,7 @@ package com.hush.app.listener
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import com.hush.app.db.NotificationEvent
 import com.hush.app.db.NotificationRepository
 import com.hush.app.di.ApplicationScope
 import com.hush.app.focus.Decision
@@ -24,8 +25,11 @@ import kotlinx.coroutines.withContext
  * All listener logic, with no Android service state: the service forwards every callback here.
  *
  * Invariant ("never lose a notification"): persist first, hide second. The insert runs under
- * [NonCancellable]; a cancel is attempted only after the insert returned, and only for HOLD. If the
- * insert throws we log and leave the notification visible (fail open).
+ * [NonCancellable]; a cancel is attempted only after the insert returned, and only for HOLD and
+ * MUTE. If the insert throws we log and leave the notification visible (fail open).
+ *
+ * MUTE is HOLD plus a stamp that closes the row at once ([NotificationEvent.MUTED_AT]). If the
+ * stamp cannot be written the row is simply still held, and the next digest delivers it.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @Singleton
@@ -68,19 +72,20 @@ class NotificationIngest @Inject constructor(
     /**
      * Returns the gate's decision when a row was written, null when the event was filtered, collapsed
      * as a duplicate, or the insert failed. [cancel] is invoked with the notification key only after a
-     * successful insert of a HOLD row; its failures are logged and leave the row `held`.
+     * successful insert of a HOLD or MUTE row; its failures are logged and leave the row `held`.
      */
     suspend fun onPosted(sbn: StatusBarNotification, importance: Int?, cancel: (key: String) -> Unit): Decision? {
         val event = mapper.map(sbn, importance, settings.current()) ?: return null
         var decision = gate.decide(event)
-        if (decision == Decision.HOLD && synchronized(backfilled) { (event.key to event.postTime) in backfilled }) {
-            Log.i(TAG, "HOLD downgraded for ${sbn.packageName}: already recorded by backfill as visible")
+        if (decision != Decision.PASS_THROUGH && synchronized(backfilled) { (event.key to event.postTime) in backfilled }) {
+            Log.i(TAG, "$decision downgraded for ${sbn.packageName}: already recorded by backfill as visible")
             decision = Decision.PASS_THROUGH
         }
-        // A re-posted held notification must be cancelled again, so HOLD is never collapsed.
-        if (decision != Decision.HOLD && dedupe.isDuplicate(event)) return null
+        val hide = decision != Decision.PASS_THROUGH
+        // A re-posted hidden notification must be cancelled again, so HOLD and MUTE are never collapsed.
+        if (!hide && dedupe.isDuplicate(event)) return null
 
-        val row = event.copy(held = decision == Decision.HOLD)
+        val row = event.copy(held = hide)
         try {
             withContext(NonCancellable) { repo.insert(row) }
         } catch (e: Exception) {
@@ -90,7 +95,15 @@ class NotificationIngest @Inject constructor(
         dedupe.remember(row)
         tapTargets.remember(row, sbn.notification.contentIntent)
 
-        if (decision == Decision.HOLD) {
+        if (decision == Decision.MUTE) {
+            try {
+                withContext(NonCancellable) { repo.markDelivered(listOf(row.id), NotificationEvent.MUTED_AT) }
+            } catch (e: Exception) {
+                // Still a held row: it shows up in the next digest instead of being muted. Never lost.
+                Log.w(TAG, "mute stamp failed for ${sbn.packageName}: ${e.javaClass.simpleName}")
+            }
+        }
+        if (hide) {
             try {
                 cancel(sbn.key)
             } catch (e: RuntimeException) {

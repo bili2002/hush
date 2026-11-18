@@ -211,16 +211,7 @@ class FocusViewModel(
         local.update { it.copy(deliverResult = null) }
     }
 
-    /**
-     * The fix for "nothing would be held". With an empty hold list that is the app picker; otherwise
-     * apps are held but their groups are all on "Instantly", which is fixed on the rules screen.
-     */
-    fun editHoldList() {
-        viewModelScope.launch {
-            signals.requestNavigation(if (settings.current().holdPackages.isEmpty()) Routes.appPicker("hold") else Routes.FOCUS_RULES)
-        }
-    }
-
+    /** Also the fix for "nothing would be held": the rules screen sorts apps in on a first visit, and holds the intervals. */
     fun manageRules() {
         signals.requestNavigation(Routes.FOCUS_RULES)
     }

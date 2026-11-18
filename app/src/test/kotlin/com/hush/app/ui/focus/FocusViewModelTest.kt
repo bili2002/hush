@@ -341,20 +341,4 @@ class FocusViewModelTest {
         assertEquals("focus/rules", route)
         job.cancel()
     }
-
-    @Test
-    fun `editHoldList asks the shell to open the hold picker`() = runTest {
-        var route: String? = null
-        val job = launch(start = CoroutineStart.UNDISPATCHED) { signals.navigate.collect { route = it } }
-
-        // Nothing on the hold list yet: the picker. Apps held but all on "Instantly": the rules screen.
-        vm(FakeSettingsStore(Settings())).editHoldList()
-        runCurrent()
-        assertEquals("apps/hold", route)
-
-        vm().editHoldList()
-        runCurrent()
-        assertEquals("focus/rules", route)
-        job.cancel()
-    }
 }

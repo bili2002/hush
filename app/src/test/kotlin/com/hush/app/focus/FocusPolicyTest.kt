@@ -52,6 +52,13 @@ class FocusPolicyTest {
         Case("chat rule keyed by title when there is no conversation id", base.copy(title = "c1"), chatRule("com.example.alpha", INSTANT), Decision.PASS_THROUGH),
         Case("a call in a ruled chat is still never held", chat.copy(packageName = "com.example.gamma", category = Notification.CATEGORY_CALL), chatRule("com.example.gamma", 60), Decision.PASS_THROUGH),
         Case("chat rule does nothing while focus is off", chat.copy(packageName = "com.example.gamma"), chatRule("com.example.gamma", 60).copy(focusEnabled = false), Decision.PASS_THROUGH),
+        Case("held app in a muted group", base, grouped(MUTED), Decision.MUTE),
+        Case("muted chat of an app that is not held", chat.copy(packageName = "com.example.gamma"), chatRule("com.example.gamma", MUTED), Decision.MUTE),
+        Case("muted chat of a held app, the rest is held", chat.copy(conversationId = "other"), chatRule("com.example.alpha", MUTED), Decision.HOLD),
+        Case("a call in a muted group is never muted", base.copy(category = Notification.CATEGORY_CALL), grouped(MUTED), Decision.PASS_THROUGH),
+        Case("an ongoing notification in a muted group is never muted", base.copy(flags = Notification.FLAG_ONGOING_EVENT), grouped(MUTED), Decision.PASS_THROUGH),
+        Case("a removal in a muted group is recorded as usual", base.copy(event = EventType.REMOVED), grouped(MUTED), Decision.PASS_THROUGH),
+        Case("muted group while focus is off", base, grouped(MUTED).copy(focusEnabled = false), Decision.PASS_THROUGH),
         Case("hush itself, even on the hold list", base.copy(packageName = BuildConfig.APPLICATION_ID), focusOn.copy(holdPackages = setOf(BuildConfig.APPLICATION_ID)), Decision.PASS_THROUGH),
     )
 

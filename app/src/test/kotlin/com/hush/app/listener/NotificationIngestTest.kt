@@ -102,6 +102,43 @@ class NotificationIngestTest {
     }
 
     @Test
+    fun `MUTE inserts the row, closes it at once and cancels - it is never waiting for a digest`() = runTest {
+        gate.decision = Decision.MUTE
+        val s = sbn()
+
+        assertEquals(Decision.MUTE, ingest.onPosted(s, null, cancel))
+
+        val row = rows().single()
+        assertTrue(row.held)
+        assertTrue(row.muted)
+        assertEquals(listOf(s.key), cancelled)
+        assertTrue(repo.selectHeldUndelivered().isEmpty(), "nothing is left for the deliverer")
+        assertTrue(repo.selectHeldBatch(since = 1L).isEmpty(), "and no digest view lists it")
+    }
+
+    @Test
+    fun `MUTE with a failing insert does not cancel (fail open)`() = runTest {
+        gate.decision = Decision.MUTE
+        driver.execute(null, "DROP TABLE notification_event", 0)
+
+        assertNull(ingest.onPosted(sbn(), null, cancel))
+
+        assertTrue(cancelled.isEmpty())
+    }
+
+    @Test
+    fun `MUTE for a posting the backfill already recorded is downgraded - never cancelled`() = runTest {
+        val s = sbn(postTime = 1_000L)
+        ingest.onBackfill(listOf(s))
+        gate.decision = Decision.MUTE
+
+        assertNull(ingest.onPosted(s, 3, cancel))
+
+        assertTrue(cancelled.isEmpty())
+        assertFalse(rows().single().held)
+    }
+
+    @Test
     fun `HOLD with a failing insert does not cancel (fail open)`() = runTest {
         gate.decision = Decision.HOLD
         driver.execute(null, "DROP TABLE notification_event", 0)

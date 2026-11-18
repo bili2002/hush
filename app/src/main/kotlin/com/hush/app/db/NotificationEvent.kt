@@ -31,6 +31,18 @@ data class NotificationEvent(
      * so rows captured before conversations were recorded still group by title.
      */
     val chatKey: String? get() = (conversationId ?: title)?.takeIf { it.isNotEmpty() }
+
+    /** Hidden by a "Muted" rule: it was never in a digest and never will be. */
+    val muted: Boolean get() = held && deliveredAt == MUTED_AT
+
+    companion object {
+        /**
+         * The `deliveredAt` of a muted row. A muted row is finished the moment it is recorded, so it
+         * carries a delivery stamp like any other released row (nothing treats it as still held), and
+         * this value, which no real delivery can have, tells it apart from one that was in a digest.
+         */
+        const val MUTED_AT = 0L
+    }
 }
 
 enum class EventType { POSTED, REMOVED }

@@ -4,6 +4,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -48,6 +50,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
@@ -62,10 +65,13 @@ import com.hush.app.focus.CategoryGroup
 import com.hush.app.focus.ChatRule
 import com.hush.app.focus.HeldApp
 import com.hush.app.focus.INSTANT
+import com.hush.app.focus.MUTED
 import com.hush.app.focus.THROTTLE_CHOICES
 import com.hush.app.ui.HushTheme
 import com.hush.app.ui.components.AppIcon
 import com.hush.app.ui.components.HushCard
+import com.hush.app.ui.components.PickerSheet
+import com.hush.app.ui.components.SheetItem
 import com.hush.app.ui.components.throttleEvery
 import com.hush.app.ui.components.throttleLabel
 
@@ -82,6 +88,13 @@ data class RulesCallbacks(
     val onChatRuleMinutes: (ChatRule, Int) -> Unit = { _, _ -> },
     val onRemoveChatRule: (ChatRule) -> Unit = {},
     val onAddApps: () -> Unit = {},
+    val onAutoSort: () -> Unit = {},
+    /** Null = start from the app list. */
+    val onAddChatRule: (String?) -> Unit = {},
+    val onPick: (SheetItem) -> Unit = {},
+    val onDismissPicker: () -> Unit = {},
+    val onChatThrottle: (Int?) -> Unit = {},
+    val onDismissChatThrottle: () -> Unit = {},
     val onDismissError: () -> Unit = {},
     val onRetrySeed: () -> Unit = {},
 )
@@ -103,6 +116,12 @@ fun RulesScreen(onBack: () -> Unit, vm: RulesViewModel = hiltViewModel()) {
             onChatRuleMinutes = vm::setChatRuleMinutes,
             onRemoveChatRule = vm::removeChatRule,
             onAddApps = vm::addApps,
+            onAutoSort = vm::autoSort,
+            onAddChatRule = vm::addChatRule,
+            onPick = vm::pick,
+            onDismissPicker = vm::dismissChatPicker,
+            onChatThrottle = vm::setChatThrottle,
+            onDismissChatThrottle = vm::dismissChatThrottle,
             onDismissError = vm::dismissError,
             onRetrySeed = vm::seed,
         ),
@@ -118,7 +137,7 @@ private val NameDialogSaver = listSaver<NameDialog?, String>(
     restore = { l -> if (l.isEmpty()) null else NameDialog(l[0].takeIf { l[2] == "rename" }, l[1]) },
 )
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun RulesContent(state: RulesUiState, callbacks: RulesCallbacks) {
     var nameDialog by rememberSaveable(stateSaver = NameDialogSaver) { mutableStateOf<NameDialog?>(null) }
@@ -175,21 +194,26 @@ fun RulesContent(state: RulesUiState, callbacks: RulesCallbacks) {
                 )
             }
             item(key = "actions") {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(onClick = callbacks.onAddApps) { Text(stringResource(R.string.rules_add_apps)) }
-                    OutlinedButton(onClick = { nameDialog = NameDialog(null, "") }) { Text(stringResource(R.string.rules_new_category)) }
-                }
-            }
-            item(key = "chat-header") {
-                Column(modifier = Modifier.padding(top = 8.dp)) {
-                    Text(stringResource(R.string.rules_chats_title), style = MaterialTheme.typography.titleMedium)
-                    if (state.chatRules.isEmpty()) {
+                Column {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Button(onClick = callbacks.onAddApps) { Text(stringResource(R.string.rules_add_apps)) }
+                        OutlinedButton(onClick = { nameDialog = NameDialog(null, "") }) { Text(stringResource(R.string.rules_new_category)) }
+                        OutlinedButton(onClick = callbacks.onAutoSort) { Text(stringResource(R.string.rules_auto_sort)) }
+                    }
+                    state.autoSorted?.let { added ->
                         Text(
-                            stringResource(R.string.rules_chats_none),
+                            if (added == 0) stringResource(R.string.rules_auto_sorted_none)
+                            else pluralStringResource(R.plurals.rules_auto_sorted, added, added),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                }
+            }
+            item(key = "chat-header") {
+                Row(modifier = Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(stringResource(R.string.rules_chats_title), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { callbacks.onAddChatRule(null) }) { Text(stringResource(R.string.rules_add_chat)) }
                 }
             }
             items(state.chatRules, key = { "chat-${it.rule.packageName}-${it.rule.chatKey}" }) { row ->
@@ -197,6 +221,23 @@ fun RulesContent(state: RulesUiState, callbacks: RulesCallbacks) {
             }
         }
     }
+
+    state.chatPicker?.let { picker ->
+        // Keyed by step, so the search typed for the app list does not carry over to the chat list.
+        key(picker.packageName) {
+            PickerSheet(
+                title = if (picker.packageName == null) stringResource(R.string.rules_pick_app)
+                else stringResource(R.string.history_sheet_chats_title, picker.appLabel.orEmpty()),
+                allLabel = null,
+                searchHint = stringResource(if (picker.packageName == null) R.string.history_sheet_search_apps else R.string.history_sheet_search_chats),
+                items = picker.items,
+                selectedKey = null,
+                onPick = { key -> picker.items.firstOrNull { it.key == key }?.let(callbacks.onPick) },
+                onDismiss = callbacks.onDismissPicker,
+            )
+        }
+    }
+    state.chatThrottle?.let { ChatThrottleDialog(it, onPick = callbacks.onChatThrottle, onDismiss = callbacks.onDismissChatThrottle) }
 
     nameDialog?.let { dialog ->
         NameCategoryDialog(
@@ -349,6 +390,13 @@ private fun AppRow(app: HeldApp, currentCategory: String?, categories: List<Cate
                 }
                 HorizontalDivider()
                 DropdownMenuItem(
+                    text = { Text(stringResource(R.string.rules_chat_rule_for)) },
+                    onClick = {
+                        open = false
+                        callbacks.onAddChatRule(app.packageName)
+                    },
+                )
+                DropdownMenuItem(
                     text = { Text(stringResource(R.string.rules_stop_holding)) },
                     onClick = {
                         open = false
@@ -387,8 +435,9 @@ private fun ChatRuleCard(row: ChatRuleRow, callbacks: RulesCallbacks) {
 
 /**
  * The one throttle picker: a chip showing the current choice that drops down "inherit" (null),
- * "Instantly" and the intervals. [minutes] null = inheriting; [inheritLabel] null = nothing to
- * inherit from, so that option is not offered.
+ * "Instantly", the intervals and "Muted". [minutes] null = inheriting; [inheritLabel] null =
+ * nothing to inherit from, so that option is not offered. [offerInstant] also covers "Muted":
+ * the default interval can be neither.
  */
 @Composable
 fun ThrottleChip(minutes: Int?, inheritLabel: String?, offerInstant: Boolean = true, onPick: (Int?) -> Unit) {
@@ -400,7 +449,7 @@ fun ThrottleChip(minutes: Int?, inheritLabel: String?, offerInstant: Boolean = t
             trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null) },
         )
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            ThrottleOptions(selected = minutes, inheritLabel = inheritLabel, offerInstant = offerInstant) {
+            ThrottleOptions(selected = minutes, inheritLabel = inheritLabel, offerInstant = offerInstant, offerMuted = offerInstant) {
                 open = false
                 onPick(it)
             }
@@ -410,11 +459,17 @@ fun ThrottleChip(minutes: Int?, inheritLabel: String?, offerInstant: Boolean = t
 
 /** The option rows themselves, shared by [ThrottleChip] and History's "Throttle this chat" dialog. */
 @Composable
-fun ThrottleOptions(selected: Int?, inheritLabel: String?, offerInstant: Boolean = true, onPick: (Int?) -> Unit) {
+fun ThrottleOptions(
+    selected: Int?,
+    inheritLabel: String?,
+    offerInstant: Boolean = true,
+    offerMuted: Boolean = true,
+    onPick: (Int?) -> Unit,
+) {
     // A value saved by an older build (or any value off the list) is still offered, in its place.
     val intervals = (THROTTLE_CHOICES + listOfNotNull(selected?.takeIf { it > INSTANT })).distinct().sorted()
     val inherit: List<Int?> = if (inheritLabel != null) listOf(null) else emptyList()
-    val options: List<Int?> = inherit + listOfNotNull(INSTANT.takeIf { offerInstant }) + intervals
+    val options: List<Int?> = inherit + listOfNotNull(INSTANT.takeIf { offerInstant }) + intervals + listOfNotNull(MUTED.takeIf { offerMuted })
     options.forEach { option ->
         DropdownMenuItem(
             text = { Text(if (option == null) inheritLabel.orEmpty() else throttleLabel(option)) },

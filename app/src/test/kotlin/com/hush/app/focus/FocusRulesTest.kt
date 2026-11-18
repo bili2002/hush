@@ -59,6 +59,44 @@ class FocusRulesTest {
     }
 
     @Test
+    fun `muted is a throttle that needs no alarm but still makes Focus do something`() {
+        val muted = settings(hold = setOf(alpha), categories = listOf(FocusCategory("quiet", "Quiet", MUTED)), appCategory = mapOf(alpha to "quiet"))
+
+        assertEquals(MUTED, muted.throttleMinutes(alpha, null))
+        assertTrue(muted.activeThrottles().isEmpty(), "nothing to wake up for")
+        assertTrue(muted.holdsAnything, "turning Focus on would hide something")
+        assertTrue(settings(hold = emptySet(), chatRules = listOf(ChatRule(alpha, "c", "C", MUTED))).holdsAnything)
+        assertEquals(60, muted.withChatRule(ChatRule(alpha, "vip", "VIP", 60)).throttleMinutes(alpha, "vip"), "one chat of a muted app can still be delivered")
+    }
+
+    @Test
+    fun `the automatic sort holds the suggested apps in their preset group and nothing else`() {
+        val sms = Presets.neverAutomatic.first()
+        val before = settings(
+            hold = setOf(alpha),
+            categories = listOf(FocusCategory(Presets.MESSAGING, "Messaging", 15)),
+            appCategory = emptyMap(),
+        ).copy(excludedPackages = setOf(gamma))
+
+        val sorted = before.withAutoSorted(
+            mapOf(
+                beta to Presets.MESSAGING,
+                "com.example.delta" to Presets.NEWS,
+                alpha to Presets.SOCIAL,
+                gamma to Presets.SOCIAL,
+                sms to Presets.MESSAGING,
+                "com.example.odd" to "no-such-preset",
+            ),
+        )
+
+        assertEquals(setOf(alpha, beta, "com.example.delta"), sorted.holdPackages, "already held, excluded, SMS and unknown presets are left alone")
+        assertEquals(mapOf(beta to Presets.MESSAGING, "com.example.delta" to Presets.NEWS), sorted.rules.appCategory)
+        assertEquals(listOf(Presets.MESSAGING, Presets.NEWS), sorted.rules.categories.map { it.id }, "a missing preset group is created, an existing one kept")
+        assertEquals(15, sorted.throttleMinutes(beta, null), "the group keeps the interval the owner gave it")
+        assertEquals(before, before.withAutoSorted(mapOf(alpha to Presets.SOCIAL)), "nothing to add changes nothing")
+    }
+
+    @Test
     fun `group edits never un-hold an app`() {
         val s = settings().withCategoryAdded("g", "  Group  ").withAppInCategory(alpha, "g").withCategoryMinutes("g", 30)
         assertEquals(listOf(FocusCategory("g", "Group", 30)), s.rules.categories)
@@ -103,7 +141,8 @@ class FocusRulesTest {
         assertEquals(Presets.SOCIAL, Presets.suggest("com.example.unknown", osCategory = 4))
         assertEquals(Presets.NEWS, Presets.suggest("com.example.unknown", osCategory = 5))
         assertEquals(Presets.WORK, Presets.suggest("com.example.unknown", osCategory = 7))
-        assertNull(Presets.suggest("com.example.unknown", osCategory = 0))
+        assertEquals(Presets.MEDIA, Presets.suggest("com.example.unknown", osCategory = 0), "games")
+        assertNull(Presets.suggest("com.example.unknown", osCategory = 6), "maps")
         assertNull(Presets.suggest("com.example.unknown", osCategory = null))
 
         val noNews = Settings(rules = FocusRules(categories = Presets.categories.filterNot { it.id == Presets.NEWS }))

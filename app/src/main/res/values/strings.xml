@@ -110,6 +110,8 @@
     <string name="throttle_hours_minutes">%1$d h %2$d min</string>
     <string name="throttle_every">every %1$s</string>
     <string name="throttle_not_held">not held</string>
+    <string name="throttle_muted">Muted</string>
+    <string name="throttle_muted_lower">muted</string>
 
     <!-- Apps & throttles screen -->
     <string name="rules_title">Apps &amp; throttles</string>
@@ -129,7 +131,15 @@
     <string name="rules_move_to_none">Move out of this group</string>
     <string name="rules_stop_holding">Stop holding this app</string>
     <string name="rules_chats_title">Chat rules</string>
-    <string name="rules_chats_none">None yet</string>
+    <string name="rules_add_chat">Add</string>
+    <string name="rules_chat_rule_for">Chat rule…</string>
+    <string name="rules_pick_app">Choose app</string>
+    <string name="rules_auto_sort">Auto-sort apps</string>
+    <string name="rules_auto_sorted_none">Nothing to add</string>
+    <plurals name="rules_auto_sorted">
+        <item quantity="one">Added %d app</item>
+        <item quantity="other">Added %d apps</item>
+    </plurals>
     <string name="rules_same_as_app">Same as app (%1$s)</string>
     <string name="rules_retry">Retry</string>
     <string name="rules_app_options">Move or stop holding %1$s</string>
@@ -143,6 +153,7 @@
     <string name="history_today">Today</string>
     <string name="history_yesterday">Yesterday</string>
     <string name="history_held">Held</string>
+    <string name="history_muted">Muted</string>
     <string name="history_held_delivered">Held · delivered %1$s</string>
     <string name="history_banner_delivered">Digest from %1$s</string>
     <string name="history_all_history">All history</string>

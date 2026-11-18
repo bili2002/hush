@@ -18,6 +18,7 @@ import com.hush.app.settings.Settings
 import com.hush.app.settings.SettingsStore
 import com.hush.app.ui.components.SystemStatus
 import com.hush.app.ui.components.UiSignals
+import com.hush.app.ui.rules.ChatThrottle
 import com.hush.app.ui.components.dayOf
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.LocalDate
@@ -84,19 +85,6 @@ data class HistoryUiState(
     val chatThrottle: ChatThrottle? = null,
     /** The real cause of a chat rule that could not be saved, until dismissed. */
     val ruleError: String? = null,
-)
-
-/**
- * What the chat-throttle dialog shows for one chat. [ruleMinutes] is the chat's own rule (null =
- * none, it follows the app); [appMinutes] is what the app gives it (0 = the app is not held).
- */
-data class ChatThrottle(
-    val packageName: String,
-    val chatKey: String,
-    val title: String,
-    val appLabel: String,
-    val ruleMinutes: Int?,
-    val appMinutes: Int,
 )
 
 /** Rows tagged with the mode they were loaded for, so the state never pairs a new mode with stale rows. */

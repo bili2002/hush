@@ -73,6 +73,17 @@ class DelivererTest {
     }
 
     @Test
+    fun `a row held before its group was muted is still delivered, not dropped`() = runTest {
+        seedPreviousSlot()
+        settings.update {
+            it.copy(rules = FocusRules(categories = listOf(FocusCategory("quiet", "Quiet", MUTED)), appCategory = mapOf("com.example.alpha" to "quiet")))
+        }
+
+        assertEquals(DeliverResult(4), deliverer.deliverDue())
+        assertTrue(repo.selectHeldUndelivered().isEmpty())
+    }
+
+    @Test
     fun nothingHeldPostsNothingButReArmsAlarm() = runTest {
         assertEquals(DeliverResult(0), deliverer.deliverDue())
         assertEquals(0, shadowOf(nm).allNotifications.size)

@@ -5,7 +5,8 @@ import kotlinx.serialization.Serializable
 
 /**
  * A named group of held apps with its own digest interval. [minutes]: null = use the default
- * interval ([Settings.slotMinutes]), [INSTANT] = do not hold, otherwise the interval in minutes.
+ * interval ([Settings.slotMinutes]), [INSTANT] = do not hold, [MUTED] = hide and never deliver,
+ * otherwise the interval in minutes.
  */
 @Serializable
 data class FocusCategory(val id: String, val name: String, val minutes: Int? = null)
@@ -31,6 +32,13 @@ data class FocusRules(
 /** Throttle value meaning "not held: show it right away". */
 const val INSTANT = 0
 
+/**
+ * Throttle value meaning "hidden while Focus is on and never put in a digest". The notification is
+ * still recorded and stays in History. Below [INSTANT] on purpose: every "is there an interval to
+ * wait for" check (`> INSTANT`) is false for it without knowing about it.
+ */
+const val MUTED = -1
+
 /** The intervals offered everywhere a throttle is picked. Each divides the next, so their slot boundaries nest. */
 val THROTTLE_CHOICES = listOf(15, 30, 60, 120, 240)
 
@@ -46,7 +54,8 @@ fun Settings.appThrottleMinutes(packageName: String): Int =
 
 /**
  * How long a notification of [packageName] in chat [chatKey] is held: chat rule → app category →
- * default. [INSTANT] means it is not held at all. Whether Focus is on is the caller's business.
+ * default. [INSTANT] means it is not held at all, [MUTED] that it is hidden for good. Whether Focus
+ * is on is the caller's business.
  */
 fun Settings.throttleMinutes(packageName: String, chatKey: String?): Int =
     chatRule(packageName, chatKey)?.minutes ?: appThrottleMinutes(packageName)
@@ -55,8 +64,9 @@ fun Settings.throttleMinutes(packageName: String, chatKey: String?): Int =
 fun Settings.activeThrottles(): Set<Int> =
     (holdPackages.map(::appThrottleMinutes) + rules.chatRules.map { it.minutes }).filter { it > INSTANT }.toSet()
 
-/** False when turning Focus on would hold nothing (no held app with a real interval and no holding chat rule). */
-val Settings.holdsAnything: Boolean get() = activeThrottles().isNotEmpty()
+/** False when turning Focus on would change nothing: no held app and no chat rule that holds or mutes. */
+val Settings.holdsAnything: Boolean
+    get() = holdPackages.any { appThrottleMinutes(it) != INSTANT } || rules.chatRules.any { it.minutes != INSTANT }
 
 // ---- rule edits (pure; the UI applies them through FocusActions.updateRules) ----
 
@@ -107,6 +117,8 @@ object Presets {
     const val SOCIAL = "social"
     const val WORK = "work"
     const val NEWS = "news"
+    const val SHOPPING = "shopping"
+    const val MEDIA = "media"
 
     /** All on the default interval, so creating them changes nothing about what is held or when. */
     val categories = listOf(
@@ -114,7 +126,15 @@ object Presets {
         FocusCategory(SOCIAL, "Social"),
         FocusCategory(WORK, "Email & work"),
         FocusCategory(NEWS, "News"),
+        FocusCategory(SHOPPING, "Shopping"),
+        FocusCategory(MEDIA, "Games & media"),
     )
+
+    /**
+     * Never added by the automatic sort, whatever they would be sorted into: SMS apps, because
+     * login codes arrive there and an hour's delay locks the owner out. Adding one by hand still works.
+     */
+    val neverAutomatic = setOf("com.google.android.apps.messaging", "com.samsung.android.messaging")
 
     private val known: Map<String, String> = buildMap {
         listOf(
@@ -131,9 +151,17 @@ object Presets {
             "com.google.android.gm", "com.microsoft.office.outlook", "com.Slack", "com.microsoft.teams",
             "com.google.android.calendar",
         ).forEach { put(it, WORK) }
+        listOf(
+            "com.amazon.mShop.android.shopping", "com.ebay.mobile", "com.alibaba.aliexpresshd", "com.einnovation.temu",
+            "com.zzkko", "com.vinted", "com.etsy.android",
+        ).forEach { put(it, SHOPPING) }
+        listOf("com.spotify.music", "com.netflix.mediaclient", "tv.twitch.android.app").forEach { put(it, MEDIA) }
     }
 
     // android.content.pm.ApplicationInfo.CATEGORY_* (plain ints so this stays a pure function).
+    private const val OS_GAME = 0
+    private const val OS_AUDIO = 1
+    private const val OS_VIDEO = 2
     private const val OS_SOCIAL = 4
     private const val OS_NEWS = 5
     private const val OS_PRODUCTIVITY = 7
@@ -147,6 +175,7 @@ object Presets {
         OS_SOCIAL -> SOCIAL
         OS_NEWS -> NEWS
         OS_PRODUCTIVITY -> WORK
+        OS_GAME, OS_AUDIO, OS_VIDEO -> MEDIA
         else -> null
     }
 }
@@ -165,6 +194,24 @@ fun Settings.seededWithPresets(osCategory: (String) -> Int?): Settings {
     val sorted = holdPackages.filterNot { it in rules.appCategory }
         .mapNotNull { pkg -> Presets.suggest(pkg, osCategory(pkg))?.let { pkg to it } }
     return copy(rules = rules.copy(categories = categories, appCategory = rules.appCategory + sorted, seeded = true))
+}
+
+/**
+ * The automatic sort: holds every app in [suggestions] (package → preset id from [Presets.suggest])
+ * that is not held yet, in its preset group. A preset group that was deleted is created again when
+ * something is sorted into it. Apps already held, excluded from recording, or in
+ * [Presets.neverAutomatic] are left alone.
+ */
+fun Settings.withAutoSorted(suggestions: Map<String, String>): Settings {
+    val add = suggestions.filter { (pkg, preset) ->
+        pkg !in holdPackages && pkg !in excludedPackages && pkg !in Presets.neverAutomatic && Presets.categories.any { it.id == preset }
+    }
+    if (add.isEmpty()) return this
+    val missing = Presets.categories.filter { p -> p.id in add.values && rules.categories.none { it.id == p.id } }
+    return copy(
+        holdPackages = holdPackages + add.keys,
+        rules = rules.copy(categories = rules.categories + missing, appCategory = rules.appCategory + add),
+    )
 }
 
 // ---- read model shared by the Focus summary and the rules screen ----

@@ -208,6 +208,7 @@
     <string name="history_open_failed">Couldn\'t open %1$s — uninstalled, disabled, or no screen to open</string>
     <string name="history_dismiss">Dismiss</string>
     <string name="history_throttle_chat">Throttle this chat</string>
+    <string name="history_chat_rule">Chat rule · %1$s</string>
     <string name="history_throttle_title">Throttle this chat</string>
     <string name="history_throttle_subject">%1$s · %2$s</string>
     <string name="history_empty_listener_off">Nothing recorded yet</string>

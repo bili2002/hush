@@ -67,7 +67,11 @@ fun Settings.categoryOf(packageName: String): FocusCategory? =
 fun Settings.chatRule(packageName: String, chatKey: String?): ChatRule? =
     chatKey?.let { key -> rules.chatRules.firstOrNull { it.packageName == packageName && it.chatKey == key } }
 
-/** The app-level throttle: [INSTANT] when the app is not on the hold list, else its category's interval or the default. */
+/**
+ * The app-level throttle: [INSTANT] when the app is not on the hold list, else its category's
+ * interval or the default. The default may itself be [INSTANT]: then a held app is only held
+ * through a group (or chat) that has a throttle of its own.
+ */
 fun Settings.appThrottleMinutes(packageName: String): Int =
     if (packageName !in holdPackages) INSTANT else categoryOf(packageName)?.minutes ?: slotMinutes
 

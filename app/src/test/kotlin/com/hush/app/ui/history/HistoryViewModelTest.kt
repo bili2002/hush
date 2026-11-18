@@ -4,7 +4,9 @@ import com.hush.app.db.EventType
 import com.hush.app.db.NotificationRepository
 import com.hush.app.db.ChatSummary
 import com.hush.app.focus.ChatRule
+import com.hush.app.focus.FocusRules
 import com.hush.app.focus.INSTANT
+import com.hush.app.focus.MUTED
 import com.hush.app.open.OpenResult
 import com.hush.app.settings.Settings
 import com.hush.app.testing.FakeFocusActions
@@ -61,6 +63,20 @@ class HistoryViewModelTest {
     private suspend fun HistoryViewModel.loaded(): HistoryUiState = state.first { !it.loading }
 
     private fun HistoryUiState.ids() = days.flatMap { it.items }.map { it.id }
+
+    @Test
+    fun `a row knows the rule its chat has, by conversation id or by title, and none for other chats`() = runTest {
+        settings.update {
+            it.copy(rules = FocusRules(chatRules = listOf(ChatRule("com.example.alpha", "c1", "Group one", 240), ChatRule("com.example.alpha", "Sender A", "Sender A", MUTED))))
+        }
+        val s = vm().loaded()
+
+        assertEquals(240, s.chatRuleMinutes(event("a", conversationId = "c1")))
+        assertEquals(MUTED, s.chatRuleMinutes(event("b", title = "Sender A")))
+        assertNull(s.chatRuleMinutes(event("c", conversationId = "c2")))
+        assertNull(s.chatRuleMinutes(event("d", packageName = "com.example.beta", conversationId = "c1")), "the same chat id in another app")
+        assertNull(s.chatRuleMinutes(event("e", title = null)))
+    }
 
     @Test
     fun `the muted filter shows what is muted now, combines with the app filter, and the count offers it`() = runTest {

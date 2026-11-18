@@ -71,6 +71,7 @@ import com.hush.app.ui.components.SheetItem
 import com.hush.app.ui.components.dayLabel
 import com.hush.app.ui.components.formatClock
 import com.hush.app.ui.components.startActivitySafely
+import com.hush.app.ui.components.throttleLabel
 import com.hush.app.ui.rules.ChatThrottleDialog
 import java.time.LocalDate
 import java.time.ZoneId
@@ -399,6 +400,7 @@ private fun NotificationList(state: HistoryUiState, zone: ZoneId, today: LocalDa
                 NotificationRow(
                     row = row,
                     expanded = state.expandedId == row.id,
+                    chatRuleMinutes = state.chatRuleMinutes(row),
                     zone = zone,
                     callbacks = callbacks,
                 )
@@ -428,6 +430,8 @@ private val RowBody @Composable get() = MaterialTheme.typography.bodyMedium.copy
 private fun NotificationRow(
     row: NotificationEvent,
     expanded: Boolean,
+    /** The throttle this row's chat has a rule for, or null. */
+    chatRuleMinutes: Int?,
     zone: ZoneId,
     callbacks: HistoryCallbacks,
 ) {
@@ -487,7 +491,11 @@ private fun NotificationRow(
             }
             if (expanded && row.chatKey != null) {
                 TextButton(onClick = { callbacks.onAskChatThrottle(row) }, contentPadding = PaddingValues(horizontal = 8.dp)) {
-                    Text(stringResource(R.string.history_throttle_chat))
+                    // With a rule the button names it: this is where the owner sees what a chat is set to.
+                    Text(
+                        chatRuleMinutes?.let { stringResource(R.string.history_chat_rule, throttleLabel(it)) }
+                            ?: stringResource(R.string.history_throttle_chat),
+                    )
                 }
             }
         }

@@ -64,7 +64,7 @@ class NotificationRepositoryTest {
         repo.markDelivered(ids, deliveredAt = 20)
 
         assertEquals(0L, repo.countUnsynced().first())
-        assertEquals(0L, repo.countHeld().first())
+        assertEquals(0L, repo.heldUndelivered().first().size.toLong())
         assertEquals(1001, repo.selectHeldBatch(20).size)
     }
 
@@ -92,16 +92,16 @@ class NotificationRepositoryTest {
         repo.insert(event("p", held = false, postTime = 3))
 
         assertEquals(listOf("h1", "h2"), repo.selectHeldUndelivered().map { it.id })
-        assertEquals(2L, repo.countHeld().first())
+        assertEquals(2L, repo.heldUndelivered().first().size.toLong())
 
         repo.markDelivered(listOf("h1"), deliveredAt = 1_000)
         assertEquals(listOf("h2"), repo.selectHeldUndelivered().map { it.id })
-        assertEquals(1L, repo.countHeld().first())
+        assertEquals(1L, repo.heldUndelivered().first().size.toLong())
         assertEquals(listOf("h1"), repo.selectHeldBatch(1_000).map { it.id })
         assertTrue(repo.selectHeldBatch(2_000).isEmpty())
 
         repo.markDelivered(emptyList(), deliveredAt = 3_000) // no-op
-        assertEquals(1L, repo.countHeld().first())
+        assertEquals(1L, repo.heldUndelivered().first().size.toLong())
     }
 
     @Test

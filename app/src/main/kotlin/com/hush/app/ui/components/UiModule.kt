@@ -14,4 +14,7 @@ abstract class UiModule {
 
     @Binds
     abstract fun appLabels(impl: AndroidAppLabelResolver): AppLabelResolver
+
+    @Binds
+    abstract fun appCategories(impl: AndroidAppCategoryResolver): AppCategoryResolver
 }

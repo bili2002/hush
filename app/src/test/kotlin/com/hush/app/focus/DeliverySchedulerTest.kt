@@ -58,4 +58,27 @@ class DeliverySchedulerTest {
         scheduler.cancel()
         assertEquals(0, alarms.size)
     }
+
+    @Test
+    fun armsAtTheEarliestBoundaryOfAnyIntervalInUse() = runTest {
+        // Default 60, one held app in a 15-minute group, one chat rule at 240: 22:15 comes first.
+        val rules = FocusRules(
+            categories = listOf(FocusCategory("fast", "Fast", 15)),
+            appCategory = mapOf("com.example.alpha" to "fast"),
+            chatRules = listOf(ChatRule("com.example.gamma", "c1", "Group one", 240)),
+        )
+        val store = FakeSettingsStore(Settings(slotMinutes = 60, holdPackages = setOf("com.example.alpha", "com.example.beta"), rules = rules))
+        val trigger = DeliveryScheduler(ctx, store).schedule(now)
+        assertEquals(nextSlot(now, 15, ZoneId.of("UTC")), trigger)
+        assertEquals(trigger, alarms.single().triggerAtTime)
+    }
+
+    @Test
+    fun aGroupIntervalNobodyUsesDoesNotWakeThePhone() {
+        val utc = ZoneId.of("UTC")
+        val unused = Settings(slotMinutes = 60, holdPackages = setOf("com.example.alpha"), rules = FocusRules(categories = listOf(FocusCategory("fast", "Fast", 15))))
+        assertEquals(nextSlot(now, 60, utc), DeliveryScheduler.nextBoundary(now, unused, utc))
+        // Nothing would be held at all: fall back to the default slot so earlier holds still get their retry.
+        assertEquals(nextSlot(now, 30, utc), DeliveryScheduler.nextBoundary(now, Settings(slotMinutes = 30), utc))
+    }
 }

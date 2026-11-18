@@ -7,9 +7,10 @@ import com.hush.app.db.NotificationEvent
 import com.hush.app.settings.Settings
 
 /**
- * Pure hold policy. HOLD iff Focus is on, the app is on the hold list, the event is a fresh post,
- * and the notification is not one of the kinds that must never be held (ongoing, foreground
- * service, group summary, call, alarm, navigation) or from Hush itself.
+ * Pure hold policy. HOLD iff Focus is on, the rules give the notification a real interval (its
+ * chat rule, else its held app's category, else the default; see [throttleMinutes]), the event is
+ * a fresh post, and the notification is not one of the kinds that must never be held (ongoing,
+ * foreground service, group summary, call, alarm, navigation) or from Hush itself.
  */
 object FocusPolicy {
     private val neverHeldCategories = setOf(
@@ -23,7 +24,7 @@ object FocusPolicy {
 
     fun decide(event: NotificationEvent, settings: Settings): Decision {
         val hold = settings.focusEnabled &&
-            event.packageName in settings.holdPackages &&
+            settings.throttleMinutes(event.packageName, event.chatKey) > INSTANT &&
             event.event == EventType.POSTED &&
             event.flags and NEVER_HELD_FLAGS == 0 &&
             event.category !in neverHeldCategories &&

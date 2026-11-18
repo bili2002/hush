@@ -2,10 +2,16 @@ package com.hush.app.ui.focus
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.hush.app.db.NotificationEvent
 import com.hush.app.db.NotificationRepository
+import com.hush.app.focus.CategoryGroup
 import com.hush.app.focus.DeliverResult
+import com.hush.app.focus.Deliverer
+import com.hush.app.focus.DeliveryScheduler
 import com.hush.app.focus.FocusActions
-import com.hush.app.focus.nextSlot
+import com.hush.app.focus.categoryGroups
+import com.hush.app.focus.holdsAnything
+import com.hush.app.focus.throttleMinutes
 import com.hush.app.settings.Settings
 import com.hush.app.settings.SettingsStore
 import com.hush.app.ui.Routes
@@ -31,15 +37,16 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** Why the Focus toggle is disabled. Each maps to one tappable row that fixes it. */
-enum class GateReason { NO_LISTENER_ACCESS, NO_POST_PERMISSION, EMPTY_HOLD_LIST }
+enum class GateReason { NO_LISTENER_ACCESS, NO_POST_PERMISSION, NOTHING_HELD }
 
 data class Checklist(
     val listenerAccess: Boolean,
     val postPermission: Boolean,
     val batteryExempt: Boolean,
-    val holdListNonEmpty: Boolean,
+    /** The rules would hold something: a held app with an interval, or a holding chat rule. */
+    val holdsSomething: Boolean,
 ) {
-    val allDone: Boolean get() = listenerAccess && postPermission && batteryExempt && holdListNonEmpty
+    val allDone: Boolean get() = listenerAccess && postPermission && batteryExempt && holdsSomething
 }
 
 sealed interface ListenerHealth {
@@ -51,11 +58,12 @@ sealed interface ListenerHealth {
 data class FocusUiState(
     val loading: Boolean = true,
     val enabled: Boolean = false,
-    val slotMinutes: Int = 60,
     val heldCount: Long = 0,
-    /** Epoch millis of the next digest slot; the screen formats it in the device zone. */
+    /** Epoch millis of the next digest; the screen formats it in the device zone. */
     val nextSlotAt: Long? = null,
-    val holdLabels: List<String> = emptyList(),
+    /** The non-empty groups of held apps with their resolved interval, for the summary card. */
+    val groups: List<CategoryGroup> = emptyList(),
+    val chatRuleCount: Int = 0,
     /** Toggle is disabled iff non-empty. */
     val gateReasons: List<GateReason> = emptyList(),
     /** Null = card collapsed (setup already done, or all four rows satisfied). */
@@ -77,8 +85,6 @@ data class FocusUiState(
 }
 
 private data class Local(val delivering: Boolean = false, val deliverResult: DeliverResult? = null)
-
-val SLOT_CHOICES = listOf(15, 30, 60, 120)
 
 @HiltViewModel
 class FocusViewModel(
@@ -116,7 +122,7 @@ class FocusViewModel(
     }
 
     val state: StateFlow<FocusUiState> =
-        combine(settings.settings, repo.countHeld(), system, ticker, local) { s, held, sys, now, loc ->
+        combine(settings.settings, repo.heldUndelivered(), system, ticker, local) { s, held, sys, now, loc ->
             build(s, held, sys, now, loc)
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), FocusUiState())
 
@@ -133,14 +139,14 @@ class FocusViewModel(
         listenerAccess = sys.listenerEnabled,
         postPermission = sys.postNotificationsGranted,
         batteryExempt = sys.batteryExempt,
-        holdListNonEmpty = s.holdPackages.isNotEmpty(),
+        holdsSomething = s.holdsAnything,
     )
 
-    private fun build(s: Settings, held: Long, sys: SystemSnapshot, now: Long, loc: Local): FocusUiState {
+    private fun build(s: Settings, held: List<NotificationEvent>, sys: SystemSnapshot, now: Long, loc: Local): FocusUiState {
         val gate = buildList {
             if (!sys.listenerEnabled) add(GateReason.NO_LISTENER_ACCESS)
             if (!sys.postNotificationsGranted) add(GateReason.NO_POST_PERMISSION)
-            if (s.holdPackages.isEmpty()) add(GateReason.EMPTY_HOLD_LIST)
+            if (!s.holdsAnything) add(GateReason.NOTHING_HELD)
         }
         val checklist = checklistOf(s, sys)
         val connectedAt = s.listenerConnectedAt
@@ -153,10 +159,10 @@ class FocusViewModel(
         return FocusUiState(
             loading = false,
             enabled = s.focusEnabled,
-            slotMinutes = s.slotMinutes,
-            heldCount = held,
-            nextSlotAt = nextSlot(now, s.slotMinutes, zone),
-            holdLabels = s.holdPackages.map(labels::label).sortedBy { it.lowercase() },
+            heldCount = held.size.toLong(),
+            nextSlotAt = nextDigestAt(s, held, now),
+            groups = s.categoryGroups(labels::label).filter { it.apps.isNotEmpty() },
+            chatRuleCount = s.rules.chatRules.size,
             gateReasons = gate,
             checklist = if (s.setupDone || checklist.allDone) null else checklist,
             listener = listener,
@@ -166,6 +172,17 @@ class FocusViewModel(
         )
     }
 
+    /**
+     * When the next digest will appear. With rows held and none overdue it is the earliest moment one
+     * of them becomes due under its own interval; otherwise (nothing held, or something overdue that
+     * the next alarm will pick up) it is the next alarm.
+     */
+    private fun nextDigestAt(s: Settings, held: List<NotificationEvent>, now: Long): Long {
+        val nextAlarm = DeliveryScheduler.nextBoundary(now, s, zone)
+        val dueTimes = held.map { Deliverer.dueAt(it.postTime, s.throttleMinutes(it.packageName, it.chatKey), zone) }
+        return if (dueTimes.isEmpty() || dueTimes.any { it <= now }) nextAlarm else dueTimes.min()
+    }
+
     /** Re-reads the OS facts; the screen calls this on resume so a settings round-trip is reflected. */
     fun refreshSystemState() {
         system.value = systemStatus.snapshot()
@@ -173,10 +190,6 @@ class FocusViewModel(
 
     fun setEnabled(enabled: Boolean) {
         viewModelScope.launch { actions.setEnabled(enabled) }
-    }
-
-    fun setSlotMinutes(minutes: Int) {
-        viewModelScope.launch { actions.setSlotMinutes(minutes) }
     }
 
     fun deliverNow() {
@@ -198,7 +211,17 @@ class FocusViewModel(
         local.update { it.copy(deliverResult = null) }
     }
 
+    /**
+     * The fix for "nothing would be held". With an empty hold list that is the app picker; otherwise
+     * apps are held but their groups are all on "Instantly", which is fixed on the rules screen.
+     */
     fun editHoldList() {
-        signals.requestNavigation(Routes.appPicker("hold"))
+        viewModelScope.launch {
+            signals.requestNavigation(if (settings.current().holdPackages.isEmpty()) Routes.appPicker("hold") else Routes.FOCUS_RULES)
+        }
+    }
+
+    fun manageRules() {
+        signals.requestNavigation(Routes.FOCUS_RULES)
     }
 }

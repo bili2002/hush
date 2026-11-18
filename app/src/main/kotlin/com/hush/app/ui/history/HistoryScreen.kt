@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -33,6 +34,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -69,10 +71,13 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.hush.app.R
 import com.hush.app.db.NotificationEvent
+import com.hush.app.focus.INSTANT
 import com.hush.app.ui.components.AppIcon
 import com.hush.app.ui.components.dayLabel
 import com.hush.app.ui.components.formatClock
 import com.hush.app.ui.components.startActivitySafely
+import com.hush.app.ui.components.throttleEvery
+import com.hush.app.ui.rules.ThrottleOptions
 import java.time.LocalDate
 import java.time.ZoneId
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -91,6 +96,10 @@ data class HistoryCallbacks(
     val onLoadMore: () -> Unit = {},
     val onEnableListener: () -> Unit = {},
     val onDismissOpenFailure: () -> Unit = {},
+    val onAskChatThrottle: (NotificationEvent) -> Unit = {},
+    val onSetChatThrottle: (Int?) -> Unit = {},
+    val onDismissChatThrottle: () -> Unit = {},
+    val onDismissRuleError: () -> Unit = {},
     /** Whether a tap on the row still reaches the notification's own target (the chat), not just the app. */
     val opensOriginal: (NotificationEvent) -> Boolean = { false },
 )
@@ -129,6 +138,10 @@ fun HistoryScreen(vm: HistoryViewModel = hiltViewModel()) {
                 launchFailed = !context.startActivitySafely(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
             },
             onDismissOpenFailure = vm::dismissOpenFailure,
+            onAskChatThrottle = vm::askChatThrottle,
+            onSetChatThrottle = vm::setChatThrottle,
+            onDismissChatThrottle = vm::dismissChatThrottle,
+            onDismissRuleError = vm::dismissRuleError,
             opensOriginal = vm::opensOriginal,
         ),
     )
@@ -160,7 +173,12 @@ fun HistoryContent(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
         }
-        state.openFailure?.let { OpenFailureLine(appLabel = it, onDismiss = callbacks.onDismissOpenFailure) }
+        state.openFailure?.let {
+            ErrorLine(stringResource(R.string.history_open_failed, it), onDismiss = callbacks.onDismissOpenFailure)
+        }
+        state.ruleError?.let {
+            ErrorLine(stringResource(R.string.rules_error, it), onDismiss = callbacks.onDismissRuleError)
+        }
 
         val batch = state.mode as? HistoryMode.HeldBatch
         if (batch != null) {
@@ -220,16 +238,44 @@ fun HistoryContent(
         )
         null -> Unit
     }
+
+    state.chatThrottle?.let { ChatThrottleDialog(it, onPick = callbacks.onSetChatThrottle, onDismiss = callbacks.onDismissChatThrottle) }
+}
+
+/** One chat's own interval: follow the app, never hold, or one of the intervals. Picking applies and closes. */
+@Composable
+private fun ChatThrottleDialog(dialog: ChatThrottle, onPick: (Int?) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.history_throttle_title)) },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    stringResource(R.string.history_throttle_subject, dialog.title, dialog.appLabel),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+                ThrottleOptions(
+                    selected = dialog.ruleMinutes,
+                    inheritLabel = stringResource(R.string.rules_same_as_app, throttleEvery(dialog.appMinutes)),
+                    // For a chat of an app that is not held, "Instantly" would be a rule that changes nothing.
+                    offerInstant = dialog.appMinutes > INSTANT || dialog.ruleMinutes == INSTANT,
+                    onPick = onPick,
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.rules_cancel)) } },
+    )
 }
 
 @Composable
-private fun OpenFailureLine(appLabel: String, onDismiss: () -> Unit) {
+private fun ErrorLine(message: String, onDismiss: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            stringResource(R.string.history_open_failed, appLabel),
+            message,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.error,
             modifier = Modifier.weight(1f),
@@ -571,8 +617,8 @@ private fun NotificationRow(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (canShowChat || canShowApp) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (canShowChat || canShowApp || row.chatKey != null) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                         if (canShowChat) {
                             TextButton(onClick = { callbacks.onShowChat(row) }, contentPadding = PaddingValues(horizontal = 8.dp)) {
                                 Text(stringResource(R.string.history_only_chat))
@@ -581,6 +627,11 @@ private fun NotificationRow(
                         if (canShowApp) {
                             TextButton(onClick = { callbacks.onShowApp(row) }, contentPadding = PaddingValues(horizontal = 8.dp)) {
                                 Text(stringResource(R.string.history_only_app))
+                            }
+                        }
+                        if (row.chatKey != null) {
+                            TextButton(onClick = { callbacks.onAskChatThrottle(row) }, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                                Text(stringResource(R.string.history_throttle_chat))
                             }
                         }
                     }

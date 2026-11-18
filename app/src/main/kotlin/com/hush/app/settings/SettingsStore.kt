@@ -1,5 +1,6 @@
 package com.hush.app.settings
 
+import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -10,7 +11,9 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import com.hush.app.focus.FocusRules
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.json.Json
 
 interface SettingsStore {
     val settings: Flow<Settings>
@@ -32,6 +35,8 @@ data class Settings(
     val lastSyncError: String? = null,
     val lastFocusError: String? = null,
     val setupDone: Boolean = false,
+    /** Categories, per-category intervals and chat rules; see `focus/FocusRules.kt`. */
+    val rules: FocusRules = FocusRules(),
 )
 
 /** Preferences-DataStore backed [SettingsStore]. Absent keys read as [Settings] defaults. */
@@ -42,7 +47,14 @@ class DataStoreSettingsStore(private val dataStore: DataStore<Preferences>) : Se
     override suspend fun current(): Settings = settings.first()
 
     override suspend fun update(block: (Settings) -> Settings) {
-        dataStore.edit { prefs -> prefs.write(block(prefs.toSettings())) }
+        dataStore.edit { prefs ->
+            val before = prefs.toSettings()
+            val after = block(before)
+            // The rules blob is rewritten only by a rules edit. Every other write (listener and sync stamps
+            // land here all day) leaves it alone, so a blob this build could not read is not silently
+            // replaced by "no rules" and is still there for a build that can read it.
+            prefs.write(after, writeRules = after.rules != before.rules)
+        }
     }
 
     private object Keys {
@@ -59,6 +71,18 @@ class DataStoreSettingsStore(private val dataStore: DataStore<Preferences>) : Se
         val lastSyncError = stringPreferencesKey("last_sync_error")
         val lastFocusError = stringPreferencesKey("last_focus_error")
         val setupDone = booleanPreferencesKey("setup_done")
+        val rules = stringPreferencesKey("focus_rules")
+    }
+
+    /** A blob this build cannot read (corrupt, or a shape from a newer build) means "no rules", never a crash. */
+    private fun decodeRules(raw: String?): FocusRules {
+        raw ?: return FocusRules()
+        return try {
+            json.decodeFromString(FocusRules.serializer(), raw)
+        } catch (e: IllegalArgumentException) { // SerializationException is one
+            Log.w(TAG, "focus rules unreadable, falling back to none: ${e.javaClass.simpleName}")
+            FocusRules()
+        }
     }
 
     private fun Preferences.toSettings(): Settings {
@@ -77,10 +101,11 @@ class DataStoreSettingsStore(private val dataStore: DataStore<Preferences>) : Se
             lastSyncError = this[Keys.lastSyncError],
             lastFocusError = this[Keys.lastFocusError],
             setupDone = this[Keys.setupDone] ?: d.setupDone,
+            rules = decodeRules(this[Keys.rules]),
         )
     }
 
-    private fun androidx.datastore.preferences.core.MutablePreferences.write(s: Settings) {
+    private fun androidx.datastore.preferences.core.MutablePreferences.write(s: Settings, writeRules: Boolean) {
         this[Keys.serverUrl] = s.serverUrl
         this[Keys.token] = s.token
         this[Keys.focusEnabled] = s.focusEnabled
@@ -94,9 +119,15 @@ class DataStoreSettingsStore(private val dataStore: DataStore<Preferences>) : Se
         setOrRemove(Keys.lastSyncError, s.lastSyncError)
         setOrRemove(Keys.lastFocusError, s.lastFocusError)
         this[Keys.setupDone] = s.setupDone
+        if (writeRules) this[Keys.rules] = json.encodeToString(FocusRules.serializer(), s.rules)
     }
 
     private fun <T> androidx.datastore.preferences.core.MutablePreferences.setOrRemove(key: Preferences.Key<T>, value: T?) {
         if (value == null) remove(key) else this[key] = value
+    }
+
+    private companion object {
+        const val TAG = "HushSettings"
+        val json = Json { ignoreUnknownKeys = true }
     }
 }

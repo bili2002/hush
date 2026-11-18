@@ -2,7 +2,11 @@ package com.hush.app.ui.apps
 
 import androidx.lifecycle.SavedStateHandle
 import com.hush.app.db.AppSummary
+import com.hush.app.focus.FocusRules
+import com.hush.app.focus.Presets
 import com.hush.app.settings.Settings
+import com.hush.app.ui.components.AppCategoryResolver
+import com.hush.app.testing.FakeFocusActions
 import com.hush.app.testing.FakeSettingsStore
 import com.hush.app.testing.event
 import com.hush.app.testing.testRepository
@@ -21,6 +25,9 @@ import org.junit.Rule
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AppPickerViewModelTest {
+
+    private val noCategories = AppCategoryResolver { null }
+
 
     @get:Rule
     val mainRule = MainDispatcherRule()
@@ -84,7 +91,7 @@ class AppPickerViewModelTest {
         val repo = testRepository()
         repo.insert(event("x", packageName = "com.example.seenonly", appLabel = "Seen Only"))
         val store = FakeSettingsStore(Settings(holdPackages = setOf("com.example.photos")))
-        val vm = AppPickerViewModel(savedState("hold"), source, repo, store)
+        val vm = AppPickerViewModel(savedState("hold"), source, repo, store, noCategories, FakeFocusActions(store))
         backgroundScope.launch { vm.state.collect {} }
 
         assertTrue(vm.state.value.loading)
@@ -103,7 +110,7 @@ class AppPickerViewModelTest {
     fun `hold picker writes holdPackages only and re-orders`() = runTest {
         val source = FakeAppsSource(installed).also { it.gate.complete(Unit) }
         val store = FakeSettingsStore()
-        val vm = AppPickerViewModel(savedState("hold"), source, testRepository(), store)
+        val vm = AppPickerViewModel(savedState("hold"), source, testRepository(), store, noCategories, FakeFocusActions(store))
         backgroundScope.launch { vm.state.collect {} }
         vm.state.first { !it.loading }
 
@@ -121,7 +128,7 @@ class AppPickerViewModelTest {
     fun `excluded picker writes excludedPackages only`() = runTest {
         val source = FakeAppsSource(installed).also { it.gate.complete(Unit) }
         val store = FakeSettingsStore(Settings(holdPackages = setOf("com.example.alpha")))
-        val vm = AppPickerViewModel(savedState("excluded"), source, testRepository(), store)
+        val vm = AppPickerViewModel(savedState("excluded"), source, testRepository(), store, noCategories, FakeFocusActions(store))
         backgroundScope.launch { vm.state.collect {} }
         val s = vm.state.first { !it.loading }
         assertEquals(PickerList.EXCLUDED, s.list)
@@ -135,7 +142,8 @@ class AppPickerViewModelTest {
     @Test
     fun `search filters and reports no matches`() = runTest {
         val source = FakeAppsSource(installed).also { it.gate.complete(Unit) }
-        val vm = AppPickerViewModel(savedState("hold"), source, testRepository(), FakeSettingsStore())
+        val store = FakeSettingsStore()
+        val vm = AppPickerViewModel(savedState("hold"), source, testRepository(), store, noCategories, FakeFocusActions(store))
         backgroundScope.launch { vm.state.collect {} }
         vm.state.first { !it.loading }
 
@@ -152,7 +160,8 @@ class AppPickerViewModelTest {
         }
         val repo = testRepository()
         repo.insert(event("x", packageName = "com.example.seenonly", appLabel = "Seen Only"))
-        val vm = AppPickerViewModel(savedState("hold"), source, repo, FakeSettingsStore())
+        val store = FakeSettingsStore()
+        val vm = AppPickerViewModel(savedState("hold"), source, repo, store, noCategories, FakeFocusActions(store))
         backgroundScope.launch { vm.state.collect {} }
         val s = vm.state.first { !it.loading && it.apps.isNotEmpty() }
         assertEquals("package manager died", s.loadError)
@@ -164,5 +173,44 @@ class AppPickerViewModelTest {
         assertEquals(PickerList.HOLD, PickerList.from(null))
         assertEquals(PickerList.HOLD, PickerList.from("bogus"))
         assertEquals(PickerList.EXCLUDED, PickerList.from("excluded"))
+    }
+
+    @Test
+    fun `a newly held app lands in its suggested group and un-holding forgets the group`() = runTest {
+        val source = FakeAppsSource(installed).also { it.gate.complete(Unit) }
+        val store = FakeSettingsStore(Settings(rules = FocusRules(categories = Presets.categories, seeded = true)))
+        // ApplicationInfo.CATEGORY_NEWS = 5
+        val actions = FakeFocusActions(store)
+        val vm = AppPickerViewModel(savedState("hold"), source, testRepository(), store, { pkg -> if (pkg == "com.example.zulu") 5 else null }, actions)
+        backgroundScope.launch { vm.state.collect {} }
+        vm.state.first { !it.loading }
+
+        vm.setChecked("com.example.zulu", true)
+        vm.setChecked("com.example.alpha", true)
+        assertEquals(setOf("com.example.zulu", "com.example.alpha"), store.state.value.holdPackages)
+        assertEquals(mapOf("com.example.zulu" to Presets.NEWS), store.state.value.rules.appCategory, "no suggestion = no group")
+
+        vm.setChecked("com.example.zulu", false)
+        assertEquals(setOf("com.example.alpha"), store.state.value.holdPackages)
+        assertEquals(emptyMap(), store.state.value.rules.appCategory)
+        assertEquals(3, actions.rulesUpdates, "every hold-list change is a rule edit: FocusActions re-arms and releases")
+    }
+
+    @Test
+    fun `the excluded list is plain settings, and a hold change that fails says why`() = runTest {
+        val source = FakeAppsSource(installed).also { it.gate.complete(Unit) }
+        val store = FakeSettingsStore()
+        val actions = FakeFocusActions(store)
+        val excluded = AppPickerViewModel(savedState("excluded"), source, testRepository(), store, noCategories, actions)
+        excluded.setChecked("com.example.alpha", true)
+        assertEquals(setOf("com.example.alpha"), store.state.value.excludedPackages)
+        assertEquals(0, actions.rulesUpdates)
+
+        actions.rulesError = IllegalStateException("disk full")
+        val hold = AppPickerViewModel(savedState("hold"), source, testRepository(), store, noCategories, actions)
+        backgroundScope.launch { hold.state.collect {} }
+        hold.setChecked("com.example.zulu", true)
+        assertEquals("disk full", hold.state.first { it.saveError != null }.saveError)
+        assertEquals(emptySet(), store.state.value.holdPackages)
     }
 }

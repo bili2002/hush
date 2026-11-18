@@ -15,6 +15,15 @@ class FocusPolicyTest {
     private val focusOn = Settings(focusEnabled = true, holdPackages = setOf("com.example.alpha", "com.example.beta"))
     private val base = event("e1", packageName = "com.example.alpha")
 
+    private val chat = base.copy(conversationId = "c1", conversationTitle = "Group one")
+
+    private fun grouped(minutes: Int?) = focusOn.copy(
+        rules = FocusRules(categories = listOf(FocusCategory("g", "Group", minutes)), appCategory = mapOf("com.example.alpha" to "g")),
+    )
+
+    private fun chatRule(packageName: String, minutes: Int) =
+        focusOn.copy(rules = FocusRules(chatRules = listOf(ChatRule(packageName, "c1", "Group one", minutes))))
+
     private data class Case(val name: String, val event: NotificationEvent, val settings: Settings, val expected: Decision)
 
     private val table = listOf(
@@ -33,6 +42,16 @@ class FocusPolicyTest {
         Case("alarm", base.copy(category = Notification.CATEGORY_ALARM), focusOn, Decision.PASS_THROUGH),
         Case("navigation", base.copy(category = Notification.CATEGORY_NAVIGATION), focusOn, Decision.PASS_THROUGH),
         Case("message category is holdable", base.copy(category = Notification.CATEGORY_MESSAGE), focusOn, Decision.HOLD),
+        Case("held app in an instant group", base, grouped(INSTANT), Decision.PASS_THROUGH),
+        Case("held app in a group with its own interval", base, grouped(15), Decision.HOLD),
+        Case("held app in a group that follows the default", base, grouped(null), Decision.HOLD),
+        Case("chat rule holds a chat of an app that is not held", chat.copy(packageName = "com.example.gamma"), chatRule("com.example.gamma", 60), Decision.HOLD),
+        Case("another chat of that app is not held", chat.copy(packageName = "com.example.gamma", conversationId = "other"), chatRule("com.example.gamma", 60), Decision.PASS_THROUGH),
+        Case("instant chat rule lets one chat of a held app through", chat, chatRule("com.example.alpha", INSTANT), Decision.PASS_THROUGH),
+        Case("the rest of that held app is still held", chat.copy(conversationId = "other"), chatRule("com.example.alpha", INSTANT), Decision.HOLD),
+        Case("chat rule keyed by title when there is no conversation id", base.copy(title = "c1"), chatRule("com.example.alpha", INSTANT), Decision.PASS_THROUGH),
+        Case("a call in a ruled chat is still never held", chat.copy(packageName = "com.example.gamma", category = Notification.CATEGORY_CALL), chatRule("com.example.gamma", 60), Decision.PASS_THROUGH),
+        Case("chat rule does nothing while focus is off", chat.copy(packageName = "com.example.gamma"), chatRule("com.example.gamma", 60).copy(focusEnabled = false), Decision.PASS_THROUGH),
         Case("hush itself, even on the hold list", base.copy(packageName = BuildConfig.APPLICATION_ID), focusOn.copy(holdPackages = setOf(BuildConfig.APPLICATION_ID)), Decision.PASS_THROUGH),
     )
 

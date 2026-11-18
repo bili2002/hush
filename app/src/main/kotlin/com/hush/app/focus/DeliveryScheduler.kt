@@ -50,14 +50,18 @@ class DeliveryScheduler @Inject constructor(
 
     companion object {
         private const val REQUEST_CODE = 4001
+        private const val RETRY_MINUTES = 60
 
         /**
          * The earliest slot boundary after [nowMillis] over the intervals the rules use. With no
-         * interval in use (nothing would be held) it falls back to the default slot, so rows held
-         * under earlier rules still get their retry.
+         * interval in use (nothing would be held) it falls back to the default slot, or to an hour
+         * when the default itself is "Instantly", so rows held under earlier rules still get their
+         * retry.
          */
         fun nextBoundary(nowMillis: Long, settings: Settings, zone: ZoneId): Long =
-            settings.activeThrottles().ifEmpty { setOf(settings.slotMinutes) }.minOf { nextSlot(nowMillis, it, zone) }
+            settings.activeThrottles()
+                .ifEmpty { setOf(settings.slotMinutes.takeIf { it > INSTANT } ?: RETRY_MINUTES) }
+                .minOf { nextSlot(nowMillis, it, zone) }
 
         /**
          * When the alarm has to fire next: the digest boundary while Focus is on or rows are

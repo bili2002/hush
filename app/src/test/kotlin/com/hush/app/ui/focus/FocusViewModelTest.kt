@@ -463,6 +463,19 @@ class FocusViewModelTest {
     }
 
     @Test
+    fun `a default of Instantly with no throttled group is the nothing-held state, and nothing crashes`() = runTest {
+        repo.insert(event("h", held = true, postTime = now - 60_000L))
+        val settings = FakeSettingsStore(Settings(focusEnabled = true, slotMinutes = INSTANT, holdPackages = setOf("com.example.alpha")))
+
+        val s = vm(settings).loaded()
+
+        assertEquals(listOf(GateReason.NOTHING_HELD), s.gateReasons)
+        assertTrue(s.onButGated)
+        assertEquals(Instant.parse("2024-01-10T14:00:00Z").toEpochMilli(), s.nextSlotAt, "the hourly retry")
+        assertEquals(INSTANT, s.groups.single().effectiveMinutes)
+    }
+
+    @Test
     fun `a Do Not Disturb failure is shown`() = runTest {
         val settings = FakeSettingsStore(twoProfiles.let { it.copy(profiles = it.profiles.copy(dndError = "no access")) })
         assertEquals("no access", vm(settings).loaded().dndError)

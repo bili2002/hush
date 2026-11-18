@@ -93,7 +93,13 @@ data class HistoryUiState(
     val ruleError: String? = null,
     /** How many notifications are muted right now; the "Muted" filter is offered while there are any. */
     val mutedCount: Int = 0,
-)
+    /** The active profile's chat rules, so a row can say what its chat is set to. */
+    val chatRules: List<ChatRule> = emptyList(),
+) {
+    /** The throttle [row]'s chat has a rule for, or null when it follows its app. */
+    fun chatRuleMinutes(row: NotificationEvent): Int? =
+        row.chatKey?.let { key -> chatRules.firstOrNull { it.packageName == row.packageName && it.chatKey == key }?.minutes }
+}
 
 /** Rows tagged with the mode they were loaded for, so the state never pairs a new mode with stale rows. */
 private data class Page(val mode: HistoryMode, val rows: List<NotificationEvent>, val total: Int, val showAll: Boolean)
@@ -198,6 +204,7 @@ class HistoryViewModel(
                 chatThrottle = loc.throttleFor?.let { chatThrottleOf(it, s) },
                 ruleError = loc.ruleError,
                 mutedCount = muted.toInt(),
+                chatRules = s.rules.chatRules,
             )
             // The initial value is the loading state; after that the last state stays up until fresh rows arrive.
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HistoryUiState())

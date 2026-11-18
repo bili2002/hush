@@ -29,6 +29,7 @@ import com.hush.app.ui.components.SheetItem
 import com.hush.app.ui.components.UiSignals
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -451,6 +452,22 @@ class RulesViewModelTest {
         vm.setDnd(true)
         runCurrent()
         assertEquals(before, settings.state.value, "an edit for a profile that is gone changes nothing")
+    }
+
+    @Test
+    fun `the default can be Instantly but not Muted`() = runTest {
+        val settings = FakeSettingsStore(seeded)
+        val vm = vm(settings)
+        vm.loaded()
+
+        vm.setDefaultMinutes(INSTANT)
+        val s = vm.state.first { it.defaultMinutes == INSTANT }
+        assertEquals(15, s.groups.first().effectiveMinutes, "a group with its own interval keeps it")
+        assertEquals(INSTANT, s.groups.last().effectiveMinutes, "the apps without a group are no longer held")
+
+        vm.setDefaultMinutes(MUTED)
+        assertNotNull(vm.state.first { it.error != null }.error, "refused, with its reason in the error line")
+        assertEquals(INSTANT, settings.state.value.slotMinutes)
     }
 
     @Test

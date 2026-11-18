@@ -16,10 +16,13 @@ fun throttleLabel(minutes: Int): String = when {
     else -> stringResource(R.string.throttle_hours_minutes, minutes / 60, minutes % 60)
 }
 
-/** "every 15 min" / "not held" / "muted", for lines that describe what happens to a notification. */
+/**
+ * "every 15 min" / "instantly" / "muted", for lines that describe what happens to a notification.
+ * "Instantly" and not "not held": an app on the hold list can be on it too (its group, or the default).
+ */
 @Composable
 fun throttleEvery(minutes: Int): String = when {
     minutes == MUTED -> stringResource(R.string.throttle_muted_lower)
-    minutes <= INSTANT -> stringResource(R.string.throttle_not_held)
+    minutes <= INSTANT -> stringResource(R.string.throttle_instantly_lower)
     else -> stringResource(R.string.throttle_every, throttleLabel(minutes))
 }

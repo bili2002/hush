@@ -70,6 +70,23 @@ class FocusRulesTest {
     }
 
     @Test
+    fun `with the default on Instantly only groups and chats with their own throttle are held`() {
+        val s = settings(
+            categories = listOf(FocusCategory("slow", "Slow", 120), FocusCategory("inherit", "Inherit", null)),
+            appCategory = mapOf(alpha to "slow", beta to "inherit"),
+            chatRules = listOf(ChatRule(gamma, "c", "C", MUTED)),
+        ).copy(slotMinutes = INSTANT, holdPackages = setOf(alpha, beta, gamma))
+
+        assertEquals(120, s.throttleMinutes(alpha, null))
+        assertEquals(INSTANT, s.throttleMinutes(beta, null), "a group that follows the default is not held")
+        assertEquals(INSTANT, s.throttleMinutes(gamma, null), "nor is a held app without a group")
+        assertEquals(MUTED, s.throttleMinutes(gamma, "c"))
+        assertEquals(setOf(120), s.activeThrottles())
+        assertTrue(s.holdsAnything)
+        assertFalse(s.copy(rules = FocusRules()).holdsAnything, "nothing but the instant default: Focus would do nothing")
+    }
+
+    @Test
     fun `a custom interval is hours and minutes within five minutes to a day`() {
         assertEquals(90, customThrottle("1", "30"))
         assertEquals(45, customThrottle("", "45"))

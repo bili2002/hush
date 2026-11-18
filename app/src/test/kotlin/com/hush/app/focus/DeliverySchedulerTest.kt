@@ -75,6 +75,17 @@ class DeliverySchedulerTest {
     }
 
     @Test
+    fun aDefaultOfInstantlyStillLeavesARetryBoundary() {
+        val utc = ZoneId.of("UTC")
+        // Nothing has an interval: the retry for rows held under earlier rules is hourly.
+        val instant = Settings(slotMinutes = INSTANT, holdPackages = setOf("com.example.alpha"))
+        assertEquals(nextSlot(now, 60, utc), DeliveryScheduler.nextBoundary(now, instant, utc))
+        // One group with its own interval is what the alarm follows.
+        val oneGroup = instant.copy(rules = FocusRules(categories = listOf(FocusCategory("g", "Group", 15)), appCategory = mapOf("com.example.alpha" to "g")))
+        assertEquals(nextSlot(now, 15, utc), DeliveryScheduler.nextBoundary(now, oneGroup, utc))
+    }
+
+    @Test
     fun cancelClearsTheAlarm() = runTest {
         val scheduler = DeliveryScheduler(ctx, FakeSettingsStore())
         scheduler.rearm(now, held = true)

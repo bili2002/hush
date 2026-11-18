@@ -22,7 +22,8 @@ import com.hush.app.ui.components.throttleEvery
 
 /**
  * What the chat-throttle dialog shows for one chat. [ruleMinutes] is the chat's own rule (null =
- * none, it follows the app); [appMinutes] is what the app gives it (0 = the app is not held).
+ * none, it follows the app); [appMinutes] is what the app gives it (0 = shown instantly: the app is not
+ * held, or its group or the default is on "Instantly").
  */
 data class ChatThrottle(
     val packageName: String,
@@ -60,7 +61,7 @@ fun ChatThrottleDialog(dialog: ChatThrottle, onPick: (Int?) -> Unit, onDismiss: 
                 ThrottleOptions(
                     selected = dialog.ruleMinutes,
                     inheritLabel = stringResource(R.string.rules_same_as_app, throttleEvery(dialog.appMinutes)),
-                    // For a chat of an app that is not held, "Instantly" would be a rule that changes nothing.
+                    // For a chat whose app already shows instantly, "Instantly" would be a rule that changes nothing.
                     offerInstant = dialog.appMinutes != INSTANT || dialog.ruleMinutes == INSTANT,
                     onCustom = { custom = true },
                     onPick = onPick,

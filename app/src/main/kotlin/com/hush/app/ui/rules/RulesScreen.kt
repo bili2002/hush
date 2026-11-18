@@ -193,6 +193,7 @@ fun RulesContent(state: RulesUiState, callbacks: RulesCallbacks) {
             }
             return@Scaffold
         }
+        val chatRuleCounts = remember(state.chatRules) { state.chatRules.groupingBy { it.rule.packageName }.eachCount() }
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
@@ -202,9 +203,12 @@ fun RulesContent(state: RulesUiState, callbacks: RulesCallbacks) {
                 item(key = "error") { ErrorLine(message, callbacks.onDismissError) }
             }
             item(key = "default") { DefaultCard(state.defaultMinutes, state.dnd, callbacks.onDefault, callbacks.onDnd) }
+            // Above the groups: below them, a screen full of apps kept the chat rules out of sight.
+            item(key = "chats") { ChatRulesCard(state.chatRules, callbacks) }
             items(state.groups, key = { "group-${it.id}" }) { group ->
                 GroupCard(
                     group = group,
+                    chatRuleCounts = chatRuleCounts,
                     defaultMinutes = state.defaultMinutes,
                     categories = state.groups.filter { it.id != null },
                     callbacks = callbacks,
@@ -227,15 +231,6 @@ fun RulesContent(state: RulesUiState, callbacks: RulesCallbacks) {
                         )
                     }
                 }
-            }
-            item(key = "chat-header") {
-                Row(modifier = Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(stringResource(R.string.rules_chats_title), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                    TextButton(onClick = { callbacks.onAddChatRule(null) }) { Text(stringResource(R.string.rules_add_chat)) }
-                }
-            }
-            items(state.chatRules, key = { "chat-${it.rule.packageName}-${it.rule.chatKey}" }) { row ->
-                ChatRuleCard(row, callbacks)
             }
         }
     }
@@ -285,8 +280,9 @@ private fun DefaultCard(minutes: Int, dnd: Boolean, onPick: (Int) -> Unit, onDnd
     HushCard(modifier = Modifier.fillMaxWidth()) {
         Row(modifier = Modifier.padding(start = 16.dp, end = 12.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(stringResource(R.string.rules_default_title), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-            // The same chip as every other throttle on this screen; the default itself has nothing to inherit from.
-            ThrottleChip(minutes = minutes, inheritLabel = null, offerInstant = false, onPick = { it?.let(onPick) })
+            // The same chip as every other throttle on this screen. The default has nothing to inherit from, and
+            // cannot be "Muted": that would hide every held app that has no throttle of its own.
+            ThrottleChip(minutes = minutes, inheritLabel = null, offerMuted = false, onPick = { it?.let(onPick) })
         }
         HorizontalDivider()
         // One click target: the row toggles, the switch only shows the state.
@@ -306,6 +302,8 @@ private fun DefaultCard(minutes: Int, dnd: Boolean, onPick: (Int) -> Unit, onDnd
 @Composable
 private fun GroupCard(
     group: CategoryGroup,
+    /** Package → how many chat rules it has, for the note under an app's name. */
+    chatRuleCounts: Map<String, Int>,
     defaultMinutes: Int,
     categories: List<CategoryGroup>,
     callbacks: RulesCallbacks,
@@ -350,7 +348,13 @@ private fun GroupCard(
                 group.apps.forEach { app ->
                     // Keyed: each row remembers whether its menu is open, and rows move when an app changes group.
                     key(app.packageName) {
-                        AppRow(app = app, currentCategory = id, categories = categories, callbacks = callbacks)
+                        AppRow(
+                            app = app,
+                            chatRules = chatRuleCounts[app.packageName] ?: 0,
+                            currentCategory = id,
+                            categories = categories,
+                            callbacks = callbacks,
+                        )
                     }
                 }
             }
@@ -385,7 +389,7 @@ private fun CategoryMenu(onRename: () -> Unit, onDelete: () -> Unit) {
 }
 
 @Composable
-private fun AppRow(app: HeldApp, currentCategory: String?, categories: List<CategoryGroup>, callbacks: RulesCallbacks) {
+private fun AppRow(app: HeldApp, chatRules: Int, currentCategory: String?, categories: List<CategoryGroup>, callbacks: RulesCallbacks) {
     var open by remember { mutableStateOf(false) }
     // One click target per row (the whole row); the trailing icon is only the visual hint for the menu.
     Row(
@@ -397,7 +401,16 @@ private fun AppRow(app: HeldApp, currentCategory: String?, categories: List<Cate
     ) {
         AppIcon(packageName = app.packageName, size = 32.dp)
         Spacer(Modifier.width(16.dp))
-        Text(app.label, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(app.label, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (chatRules > 0) {
+                Text(
+                    pluralStringResource(R.plurals.focus_rules_chat_rules, chatRules, chatRules),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         Box {
             Icon(Icons.Filled.MoreVert, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
@@ -439,39 +452,53 @@ private fun AppRow(app: HeldApp, currentCategory: String?, categories: List<Cate
     }
 }
 
+/** Every chat rule of the profile in one card: the header adds one, each row changes or (with "Same as app") removes one. */
 @Composable
-private fun ChatRuleCard(row: ChatRuleRow, callbacks: RulesCallbacks) {
+private fun ChatRulesCard(rules: List<ChatRuleRow>, callbacks: RulesCallbacks) {
     HushCard(modifier = Modifier.fillMaxWidth()) {
-        Row(modifier = Modifier.padding(start = 16.dp, end = 12.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            AppIcon(packageName = row.rule.packageName, size = 32.dp)
-            Spacer(Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(row.rule.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    row.appLabel,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            ThrottleChip(
-                minutes = row.rule.minutes,
-                inheritLabel = stringResource(R.string.rules_same_as_app, throttleEvery(row.appMinutes)),
-                onPick = { picked -> if (picked == null) callbacks.onRemoveChatRule(row.rule) else callbacks.onChatRuleMinutes(row.rule, picked) },
+        Row(modifier = Modifier.padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(R.string.rules_chats_title), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            TextButton(onClick = { callbacks.onAddChatRule(null) }) { Text(stringResource(R.string.rules_add_chat)) }
+        }
+        if (rules.isNotEmpty()) HorizontalDivider()
+        rules.forEach { row ->
+            // Keyed: each row remembers whether its menu or custom dialog is open, and rows come and go.
+            key(row.rule.packageName, row.rule.chatKey) { ChatRuleRowItem(row, callbacks) }
+        }
+    }
+}
+
+@Composable
+private fun ChatRuleRowItem(row: ChatRuleRow, callbacks: RulesCallbacks) {
+    Row(modifier = Modifier.padding(start = 16.dp, end = 12.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        AppIcon(packageName = row.rule.packageName, size = 32.dp)
+        Spacer(Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(row.rule.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                row.appLabel,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
+        ThrottleChip(
+            minutes = row.rule.minutes,
+            inheritLabel = stringResource(R.string.rules_same_as_app, throttleEvery(row.appMinutes)),
+            onPick = { picked -> if (picked == null) callbacks.onRemoveChatRule(row.rule) else callbacks.onChatRuleMinutes(row.rule, picked) },
+        )
     }
 }
 
 /**
  * The one throttle picker: a chip showing the current choice that drops down "inherit" (null),
  * "Instantly", the intervals and "Muted". [minutes] null = inheriting; [inheritLabel] null =
- * nothing to inherit from, so that option is not offered. [offerInstant] also covers "Muted":
- * the default interval can be neither. "Custom…" opens [CustomThrottleDialog].
+ * nothing to inherit from, so that option is not offered. [offerMuted] false leaves "Muted" out
+ * (the default interval). "Custom…" opens [CustomThrottleDialog].
  */
 @Composable
-fun ThrottleChip(minutes: Int?, inheritLabel: String?, offerInstant: Boolean = true, onPick: (Int?) -> Unit) {
+fun ThrottleChip(minutes: Int?, inheritLabel: String?, offerMuted: Boolean = true, onPick: (Int?) -> Unit) {
     var open by remember { mutableStateOf(false) }
     var custom by rememberSaveable { mutableStateOf(false) }
     if (custom) {
@@ -494,8 +521,7 @@ fun ThrottleChip(minutes: Int?, inheritLabel: String?, offerInstant: Boolean = t
             ThrottleOptions(
                 selected = minutes,
                 inheritLabel = inheritLabel,
-                offerInstant = offerInstant,
-                offerMuted = offerInstant,
+                offerMuted = offerMuted,
                 onCustom = {
                     open = false
                     custom = true

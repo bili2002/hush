@@ -152,6 +152,18 @@ class DelivererTest {
     }
 
     @Test
+    fun `setting the default to Instantly releases what was held under it and keeps an hourly retry`() = runTest {
+        repo.insert(event("a1", packageName = "com.example.alpha", postTime = slotOpen + 60_000L, held = true))
+        assertEquals(DeliverResult(0), deliverer.deliverDue(), "inside its hour: not due yet")
+
+        settings.update { it.copy(slotMinutes = INSTANT) }
+
+        assertEquals(DeliverResult(1), deliverer.deliverDue())
+        assertTrue(repo.selectHeldUndelivered().isEmpty())
+        assertEquals(nextSlot(now, 60, ZoneId.of("UTC")), alarms.single().triggerAtTime)
+    }
+
+    @Test
     fun nothingHeldPostsNothingButReArmsAlarm() = runTest {
         assertEquals(DeliverResult(0), deliverer.deliverDue())
         assertEquals(0, shadowOf(nm).allNotifications.size)

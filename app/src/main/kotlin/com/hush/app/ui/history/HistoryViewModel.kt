@@ -234,18 +234,6 @@ class HistoryViewModel(
         filters.update { if (it.app == null) it else it.copy(chat = chatKey) }
     }
 
-    /** "This app" on a row: jump to everything from the row's app, leaving the digest batch if we were in one. */
-    fun showApp(event: NotificationEvent) {
-        filters.value = Filters(app = event.packageName)
-        signals.digestLink.value = null
-    }
-
-    /** "This chat" on a row: jump to the row's conversation. */
-    fun showChat(event: NotificationEvent) {
-        filters.value = Filters(app = event.packageName, chat = event.chatKey)
-        signals.digestLink.value = null
-    }
-
     fun toggleExpanded(id: String) {
         local.update { it.copy(expandedId = if (it.expandedId == id) null else id) }
     }
@@ -260,9 +248,6 @@ class HistoryViewModel(
         val shown = state.value
         if (shown.canLoadMore) paging.update { p -> if (p.mode == shown.mode) p.copy(limit = p.limit + PAGE) else p }
     }
-
-    /** Whether tapping [event] still lands on the notification's own target (the chat) rather than just the app. */
-    fun opensOriginal(event: NotificationEvent): Boolean = opener.hasOriginalTarget(event)
 
     /** A row was tapped: open the chat it pointed at, else the app; a failure is shown until dismissed. */
     fun open(event: NotificationEvent) {

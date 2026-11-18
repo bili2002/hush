@@ -54,6 +54,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.hush.app.R
 import com.hush.app.focus.CategoryGroup
+import com.hush.app.ui.components.HushCard
 import com.hush.app.ui.components.appNotificationSettingsIntent
 import com.hush.app.ui.components.findActivity
 import com.hush.app.ui.components.formatClock
@@ -174,17 +175,10 @@ fun FocusContent(
 
 @Composable
 private fun ToggleCard(state: FocusUiState, zone: ZoneId, callbacks: FocusCallbacks) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    HushCard(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(stringResource(R.string.focus_toggle_label), style = MaterialTheme.typography.titleLarge)
-                    Text(
-                        if (state.enabled) stringResource(R.string.focus_toggle_on_summary) else stringResource(R.string.focus_toggle_off_summary),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                Text(stringResource(R.string.focus_toggle_label), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
                 // Turning OFF is always possible; only OFF → ON is gated.
                 Switch(checked = state.enabled, onCheckedChange = callbacks.onToggle, enabled = state.switchEnabled)
             }
@@ -275,7 +269,7 @@ private fun ErrorCard(title: String, message: String) {
 @Composable
 private fun RulesSummaryCard(groups: List<CategoryGroup>, chatRuleCount: Int, onManage: () -> Unit) {
     // One click target: the card. The label on the right is text, not a second button doing the same thing.
-    Card(onClick = onManage, modifier = Modifier.fillMaxWidth()) {
+    HushCard(onClick = onManage, modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.focus_rules_title), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
@@ -323,18 +317,12 @@ private fun RulesSummaryCard(groups: List<CategoryGroup>, chatRuleCount: Int, on
 
 @Composable
 private fun ChecklistCard(checklist: Checklist, callbacks: FocusCallbacks) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    HushCard(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(vertical = 12.dp)) {
             Text(
                 stringResource(R.string.focus_checklist_title),
                 style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(horizontal = 16.dp),
-            )
-            Text(
-                stringResource(R.string.focus_checklist_intro),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
             )
             HorizontalDivider()
             ChecklistRow(

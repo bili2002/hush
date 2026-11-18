@@ -164,28 +164,6 @@ class HistoryViewModelTest {
     }
 
     @Test
-    fun `only this chat on a row jumps to its app and chat and leaves the digest batch`() = runTest {
-        val row = event("h1", held = true, postTime = 1, conversationId = "c1", conversationTitle = "Group one")
-        repo.insert(row)
-        repo.insert(event("h2", held = true, postTime = 2, packageName = "com.example.beta"))
-        repo.insert(event("old", postTime = 0, conversationId = "c1", conversationTitle = "Group one"))
-        repo.markDelivered(listOf("h1", "h2"), deliveredAt = 1_000)
-        signals.digestLink.value = DigestLink(deliveredAt = 1_000)
-        val vm = vm()
-        assertEquals(listOf("h2", "h1"), vm.loaded().ids())
-
-        vm.showChat(row)
-
-        val s = vm.state.first { it.mode is HistoryMode.Browse }
-        assertEquals(HistoryMode.Browse(app = "com.example.alpha", chat = "c1"), s.mode)
-        assertEquals(listOf("h1", "old"), s.ids())
-        assertNull(signals.digestLink.value)
-
-        vm.showApp(event("x", packageName = "com.example.beta"))
-        assertEquals(listOf("h2"), vm.state.first { (it.mode as? HistoryMode.Browse)?.app == "com.example.beta" }.ids())
-    }
-
-    @Test
     fun `a tap opens the row, and a failure names the app until dismissed`() = runTest {
         val row = event("a", appLabel = "Alpha")
         repo.insert(row)
@@ -202,9 +180,6 @@ class HistoryViewModelTest {
 
         vm.dismissOpenFailure()
         assertNull(vm.state.first { it.openFailure == null }.openFailure)
-
-        opener.originals += "a"
-        assertTrue(vm.opensOriginal(row))
     }
 
     @Test

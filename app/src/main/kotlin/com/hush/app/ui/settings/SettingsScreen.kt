@@ -24,7 +24,6 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -59,6 +58,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.hush.app.R
 import com.hush.app.ui.HushTheme
 import com.hush.app.ui.Routes
+import com.hush.app.ui.components.HushCard
 import java.time.ZoneId
 
 /**
@@ -158,7 +158,7 @@ fun SettingsContent(
 
 @Composable
 private fun SectionCard(title: String, content: @Composable () -> Unit) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+    HushCard(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
             content()

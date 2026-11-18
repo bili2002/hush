@@ -10,10 +10,8 @@ import com.hush.app.listener.appContext
 import com.hush.app.testing.event
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
-import kotlin.test.assertTrue
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
@@ -46,7 +44,6 @@ class NotificationOpenerTest {
         val row = event("a")
         targets.remember(row, target("com.example.OPEN_CHAT"))
 
-        assertTrue(opener.hasOriginalTarget(row))
         assertEquals(OpenResult.ORIGINAL, opener.open(row))
         assertEquals("com.example.OPEN_CHAT", assertNotNull(app.nextStartedActivity).action)
     }
@@ -56,9 +53,9 @@ class NotificationOpenerTest {
         val newest = event("new", conversationId = "c1")
         targets.remember(newest, target("com.example.OPEN_CHAT"))
 
-        assertTrue(opener.hasOriginalTarget(event("older", conversationId = "c1")))
-        assertFalse(opener.hasOriginalTarget(event("other-app", packageName = "com.example.beta", conversationId = "c1")))
-        assertFalse(opener.hasOriginalTarget(event("no-conversation", title = newest.title)))
+        assertEquals(OpenResult.ORIGINAL, opener.open(event("older", conversationId = "c1")))
+        assertEquals(OpenResult.FAILED, opener.open(event("other-app", packageName = "com.example.beta", conversationId = "c1")))
+        assertEquals(OpenResult.FAILED, opener.open(event("no-conversation", title = newest.title)))
     }
 
     @Test
@@ -77,16 +74,15 @@ class NotificationOpenerTest {
 
         assertEquals(OpenResult.APP, opener.open(row))
         assertEquals("com.example.alpha.MainActivity", assertNotNull(app.nextStartedActivity).component?.className)
-        assertFalse(opener.hasOriginalTarget(row))
+        assertNull(targets.find(row))
     }
 
     @Test
-    fun `a broadcast target cannot open a screen, so the launcher is used and no chat is promised`() {
+    fun `a broadcast target cannot open a screen, so the launcher is used`() {
         installLauncher("com.example.alpha")
         val row = event("a")
         targets.remember(row, PendingIntent.getBroadcast(ctx, 7, Intent("com.example.TRAMPOLINE"), PendingIntent.FLAG_IMMUTABLE))
 
-        assertFalse(opener.hasOriginalTarget(row))
         assertEquals(OpenResult.APP, opener.open(row))
         assertEquals("com.example.alpha.MainActivity", assertNotNull(app.nextStartedActivity).component?.className)
     }

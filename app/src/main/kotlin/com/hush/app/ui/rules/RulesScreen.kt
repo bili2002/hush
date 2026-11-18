@@ -35,9 +35,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -68,6 +65,7 @@ import com.hush.app.focus.INSTANT
 import com.hush.app.focus.THROTTLE_CHOICES
 import com.hush.app.ui.HushTheme
 import com.hush.app.ui.components.AppIcon
+import com.hush.app.ui.components.HushCard
 import com.hush.app.ui.components.throttleEvery
 import com.hush.app.ui.components.throttleLabel
 
@@ -163,13 +161,6 @@ fun RulesContent(state: RulesUiState, callbacks: RulesCallbacks) {
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item(key = "intro") {
-                Text(
-                    stringResource(R.string.rules_intro),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
             state.error?.let { message ->
                 item(key = "error") { ErrorLine(message, callbacks.onDismissError) }
             }
@@ -192,11 +183,13 @@ fun RulesContent(state: RulesUiState, callbacks: RulesCallbacks) {
             item(key = "chat-header") {
                 Column(modifier = Modifier.padding(top = 8.dp)) {
                     Text(stringResource(R.string.rules_chats_title), style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        stringResource(R.string.rules_chats_hint),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    if (state.chatRules.isEmpty()) {
+                        Text(
+                            stringResource(R.string.rules_chats_none),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
             items(state.chatRules, key = { "chat-${it.rule.packageName}-${it.rule.chatKey}" }) { row ->
@@ -229,27 +222,11 @@ private fun ErrorLine(message: String, onDismiss: () -> Unit) {
 
 @Composable
 private fun DefaultCard(minutes: Int, onPick: (Int) -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(stringResource(R.string.rules_default_title), style = MaterialTheme.typography.titleMedium)
-            Text(
-                stringResource(R.string.rules_default_hint),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            // A default saved by an older build (or any value off the list) still shows as its own segment.
-            val choices = (THROTTLE_CHOICES + minutes).distinct().sorted()
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                choices.forEachIndexed { index, choice ->
-                    SegmentedButton(
-                        selected = minutes == choice,
-                        onClick = { onPick(choice) },
-                        shape = SegmentedButtonDefaults.itemShape(index = index, count = choices.size),
-                        // No check icon: five segments need the width for their labels.
-                        icon = {},
-                    ) { Text(throttleLabel(choice), maxLines = 1) }
-                }
-            }
+    HushCard(modifier = Modifier.fillMaxWidth()) {
+        Row(modifier = Modifier.padding(start = 16.dp, end = 12.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(R.string.rules_default_title), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            // The same chip as every other throttle on this screen; the default itself has nothing to inherit from.
+            ThrottleChip(minutes = minutes, inheritLabel = null, offerInstant = false, onPick = { it?.let(onPick) })
         }
     }
 }
@@ -263,7 +240,7 @@ private fun GroupCard(
     onRename: () -> Unit,
 ) {
     val id = group.id
-    Card(modifier = Modifier.fillMaxWidth()) {
+    HushCard(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(vertical = 8.dp)) {
             Row(modifier = Modifier.padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -288,14 +265,6 @@ private fun GroupCard(
                         modifier = Modifier.padding(end = 12.dp, top = 12.dp, bottom = 12.dp),
                     )
                 }
-            }
-            if (group.minutes == INSTANT) {
-                Text(
-                    stringResource(R.string.rules_instant_note),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                )
             }
             if (group.apps.isEmpty()) {
                 Text(
@@ -393,7 +362,7 @@ private fun AppRow(app: HeldApp, currentCategory: String?, categories: List<Cate
 
 @Composable
 private fun ChatRuleCard(row: ChatRuleRow, callbacks: RulesCallbacks) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    HushCard(modifier = Modifier.fillMaxWidth()) {
         Row(modifier = Modifier.padding(start = 16.dp, end = 12.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             AppIcon(packageName = row.rule.packageName, size = 32.dp)
             Spacer(Modifier.width(16.dp))
@@ -418,19 +387,20 @@ private fun ChatRuleCard(row: ChatRuleRow, callbacks: RulesCallbacks) {
 
 /**
  * The one throttle picker: a chip showing the current choice that drops down "inherit" (null),
- * "Instantly" and the intervals. [minutes] null = inheriting.
+ * "Instantly" and the intervals. [minutes] null = inheriting; [inheritLabel] null = nothing to
+ * inherit from, so that option is not offered.
  */
 @Composable
-fun ThrottleChip(minutes: Int?, inheritLabel: String, onPick: (Int?) -> Unit) {
+fun ThrottleChip(minutes: Int?, inheritLabel: String?, offerInstant: Boolean = true, onPick: (Int?) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
         AssistChip(
             onClick = { open = true },
-            label = { Text(if (minutes == null) inheritLabel else throttleLabel(minutes), maxLines = 1) },
+            label = { Text(if (minutes == null) inheritLabel.orEmpty() else throttleLabel(minutes), maxLines = 1) },
             trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null) },
         )
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            ThrottleOptions(selected = minutes, inheritLabel = inheritLabel) {
+            ThrottleOptions(selected = minutes, inheritLabel = inheritLabel, offerInstant = offerInstant) {
                 open = false
                 onPick(it)
             }
@@ -440,12 +410,14 @@ fun ThrottleChip(minutes: Int?, inheritLabel: String, onPick: (Int?) -> Unit) {
 
 /** The option rows themselves, shared by [ThrottleChip] and History's "Throttle this chat" dialog. */
 @Composable
-fun ThrottleOptions(selected: Int?, inheritLabel: String, offerInstant: Boolean = true, onPick: (Int?) -> Unit) {
-    val options: List<Int?> = listOf<Int?>(null) + listOfNotNull(INSTANT.takeIf { offerInstant }) + THROTTLE_CHOICES +
-        listOfNotNull(selected?.takeIf { it > INSTANT && it !in THROTTLE_CHOICES })
+fun ThrottleOptions(selected: Int?, inheritLabel: String?, offerInstant: Boolean = true, onPick: (Int?) -> Unit) {
+    // A value saved by an older build (or any value off the list) is still offered, in its place.
+    val intervals = (THROTTLE_CHOICES + listOfNotNull(selected?.takeIf { it > INSTANT })).distinct().sorted()
+    val inherit: List<Int?> = if (inheritLabel != null) listOf(null) else emptyList()
+    val options: List<Int?> = inherit + listOfNotNull(INSTANT.takeIf { offerInstant }) + intervals
     options.forEach { option ->
         DropdownMenuItem(
-            text = { Text(if (option == null) inheritLabel else throttleLabel(option)) },
+            text = { Text(if (option == null) inheritLabel.orEmpty() else throttleLabel(option)) },
             trailingIcon = { if (option == selected) Icon(Icons.Filled.Check, contentDescription = null) },
             onClick = { onPick(option) },
             // The check mark alone says nothing to a screen reader.

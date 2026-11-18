@@ -66,6 +66,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -89,8 +90,6 @@ data class HistoryCallbacks(
     val onChatFilter: (String?) -> Unit = {},
     val onOpen: (NotificationEvent) -> Unit = {},
     val onToggleExpand: (String) -> Unit = {},
-    val onShowApp: (NotificationEvent) -> Unit = {},
-    val onShowChat: (NotificationEvent) -> Unit = {},
     val onShowAll: () -> Unit = {},
     val onAllHistory: () -> Unit = {},
     val onLoadMore: () -> Unit = {},
@@ -100,8 +99,6 @@ data class HistoryCallbacks(
     val onSetChatThrottle: (Int?) -> Unit = {},
     val onDismissChatThrottle: () -> Unit = {},
     val onDismissRuleError: () -> Unit = {},
-    /** Whether a tap on the row still reaches the notification's own target (the chat), not just the app. */
-    val opensOriginal: (NotificationEvent) -> Boolean = { false },
 )
 
 @Composable
@@ -129,8 +126,6 @@ fun HistoryScreen(vm: HistoryViewModel = hiltViewModel()) {
             onChatFilter = vm::setChatFilter,
             onOpen = vm::open,
             onToggleExpand = vm::toggleExpanded,
-            onShowApp = vm::showApp,
-            onShowChat = vm::showChat,
             onShowAll = vm::showAll,
             onAllHistory = vm::clearDigestLink,
             onLoadMore = vm::loadMore,
@@ -142,7 +137,6 @@ fun HistoryScreen(vm: HistoryViewModel = hiltViewModel()) {
             onSetChatThrottle = vm::setChatThrottle,
             onDismissChatThrottle = vm::dismissChatThrottle,
             onDismissRuleError = vm::dismissRuleError,
-            opensOriginal = vm::opensOriginal,
         ),
     )
 }
@@ -253,6 +247,7 @@ private fun ChatThrottleDialog(dialog: ChatThrottle, onPick: (Int?) -> Unit, onD
                 Text(
                     stringResource(R.string.history_throttle_subject, dialog.title, dialog.appLabel),
                     style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 8.dp),
                 )
                 ThrottleOptions(
@@ -507,7 +502,6 @@ private fun NotificationList(state: HistoryUiState, zone: ZoneId, today: LocalDa
                 .collect { callbacks.onLoadMore() }
         }
     }
-    val browse = state.mode as? HistoryMode.Browse
     LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
         state.days.forEach { day ->
             item(key = "day-${day.date}") {
@@ -523,9 +517,6 @@ private fun NotificationList(state: HistoryUiState, zone: ZoneId, today: LocalDa
                     row = row,
                     expanded = state.expandedId == row.id,
                     zone = zone,
-                    // Offer only the jumps that would change what is shown.
-                    canShowApp = browse?.app != row.packageName || browse.chat != null,
-                    canShowChat = row.chatKey != null && !(browse?.app == row.packageName && browse.chat == row.chatKey),
                     callbacks = callbacks,
                 )
                 HorizontalDivider(modifier = Modifier.padding(start = 72.dp))
@@ -542,17 +533,19 @@ private fun NotificationList(state: HistoryUiState, zone: ZoneId, today: LocalDa
     }
 }
 
+// One step below the Material body styles: a History row is read by the dozen, not one at a time.
+private val RowTitle @Composable get() = MaterialTheme.typography.bodyMedium
+private val RowBody @Composable get() = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 18.sp)
+
 /**
  * Behaves like a notification in the shade: the body opens what the notification pointed at, the
- * chevron unfolds the full text plus the "only this chat / app" jumps.
+ * chevron unfolds the full text and, for a chat, its throttle.
  */
 @Composable
 private fun NotificationRow(
     row: NotificationEvent,
     expanded: Boolean,
     zone: ZoneId,
-    canShowApp: Boolean,
-    canShowChat: Boolean,
     callbacks: HistoryCallbacks,
 ) {
     val appName = row.appLabel?.takeIf { it.isNotBlank() } ?: row.packageName
@@ -570,7 +563,7 @@ private fun NotificationRow(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     appName,
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
                     maxLines = 1,
@@ -578,14 +571,14 @@ private fun NotificationRow(
                 )
                 Text(
                     formatClock(row.postTime, zone),
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             row.title?.takeIf { it.isNotBlank() }?.let {
                 Text(
                     it,
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = RowTitle,
                     fontWeight = FontWeight.Medium,
                     maxLines = if (expanded) Int.MAX_VALUE else 1,
                     overflow = TextOverflow.Ellipsis,
@@ -595,7 +588,7 @@ private fun NotificationRow(
             body?.takeIf { it.isNotBlank() }?.let {
                 Text(
                     it,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = RowBody,
                     maxLines = if (expanded) Int.MAX_VALUE else 2,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -609,32 +602,9 @@ private fun NotificationRow(
                 Spacer(Modifier.height(6.dp))
                 HeldChip(deliveredAt = row.deliveredAt, zone = zone)
             }
-            if (expanded) {
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    if (callbacks.opensOriginal(row)) stringResource(R.string.history_tap_opens_original)
-                    else stringResource(R.string.history_tap_opens_app, appName),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (canShowChat || canShowApp || row.chatKey != null) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                        if (canShowChat) {
-                            TextButton(onClick = { callbacks.onShowChat(row) }, contentPadding = PaddingValues(horizontal = 8.dp)) {
-                                Text(stringResource(R.string.history_only_chat))
-                            }
-                        }
-                        if (canShowApp) {
-                            TextButton(onClick = { callbacks.onShowApp(row) }, contentPadding = PaddingValues(horizontal = 8.dp)) {
-                                Text(stringResource(R.string.history_only_app))
-                            }
-                        }
-                        if (row.chatKey != null) {
-                            TextButton(onClick = { callbacks.onAskChatThrottle(row) }, contentPadding = PaddingValues(horizontal = 8.dp)) {
-                                Text(stringResource(R.string.history_throttle_chat))
-                            }
-                        }
-                    }
+            if (expanded && row.chatKey != null) {
+                TextButton(onClick = { callbacks.onAskChatThrottle(row) }, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                    Text(stringResource(R.string.history_throttle_chat))
                 }
             }
         }

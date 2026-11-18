@@ -30,9 +30,6 @@ enum class OpenResult {
 
 /** Opens what a recorded notification pointed at. A seam so ViewModel tests never start activities. */
 interface NotificationOpener {
-    /** True while the original tap target of [event] (or of its conversation) is still cached. */
-    fun hasOriginalTarget(event: NotificationEvent): Boolean
-
     fun open(event: NotificationEvent): OpenResult
 }
 
@@ -41,8 +38,6 @@ class AndroidNotificationOpener @Inject constructor(
     @ApplicationContext private val ctx: Context,
     private val tapTargets: TapTargets,
 ) : NotificationOpener {
-
-    override fun hasOriginalTarget(event: NotificationEvent): Boolean = tapTargets.find(event)?.let(::opensScreen) == true
 
     override fun open(event: NotificationEvent): OpenResult {
         val target = tapTargets.find(event)

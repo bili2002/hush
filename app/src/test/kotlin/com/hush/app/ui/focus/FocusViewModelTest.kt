@@ -8,6 +8,11 @@ import com.hush.app.focus.FocusCategory
 import com.hush.app.focus.FocusRules
 import com.hush.app.focus.HeldApp
 import com.hush.app.focus.INSTANT
+import com.hush.app.focus.ScheduleEntry
+import com.hush.app.focus.withManualHold
+import com.hush.app.focus.withProfileAdded
+import com.hush.app.focus.withProfileDnd
+import com.hush.app.focus.withScheduleEntry
 import com.hush.app.settings.Settings
 import com.hush.app.testing.FakeFocusActions
 import com.hush.app.testing.FakeSettingsStore
@@ -61,6 +66,7 @@ class FocusViewModelTest {
         zone = ZoneOffset.UTC,
         // Never ticks in tests: the first emission is immediate and the clock is fixed anyway.
         tickMillis = Long.MAX_VALUE,
+        newId = { "new-id" },
     ).also { vms += it }
 
     @After
@@ -340,5 +346,105 @@ class FocusViewModelTest {
 
         assertEquals("focus/rules", route)
         job.cancel()
+    }
+
+    // ---- profiles and the schedule ----
+
+    private val twoProfiles = Settings(holdPackages = setOf("com.example.alpha"))
+        .withProfileAdded("p2", "Evening", copyOf = null, oneTime = false)
+        .withProfileDnd("p2", true)
+
+    @Test
+    fun `the profile list marks the active one, and a pick goes through FocusActions`() = runTest {
+        val settings = FakeSettingsStore(twoProfiles)
+        val vm = vm(settings)
+
+        assertEquals(
+            listOf(ProfileRow("default", "Default", active = true, oneTime = false, dnd = false), ProfileRow("p2", "Evening", active = false, oneTime = false, dnd = true)),
+            vm.loaded().profiles,
+        )
+        assertNull(vm.loaded().schedule)
+
+        vm.selectProfile("p2")
+        assertEquals(listOf(false, true), vm.state.first { it.profiles.last().active }.profiles.map { it.active })
+        assertEquals("p2", settings.state.value.profiles.activeId)
+    }
+
+    @Test
+    fun `settings without profiles still list one, called Default`() = runTest {
+        assertEquals(listOf(ProfileRow("default", "Default", active = true, oneTime = false, dnd = false)), vm().loaded().profiles)
+    }
+
+    @Test
+    fun `a new profile is opened for editing, a one-time one is also switched to, and a blank name adds nothing`() = runTest {
+        val routes = mutableListOf<String>()
+        val job = launch(start = CoroutineStart.UNDISPATCHED) { signals.navigate.collect { routes += it } }
+        val settings = FakeSettingsStore(twoProfiles)
+        val vm = vm(settings)
+        vm.loaded()
+
+        vm.addProfile("  ", copyOf = null, oneTime = false)
+        vm.addProfile("Trip", copyOf = "p2", oneTime = true)
+        val s = vm.state.first { it.profiles.size == 3 && it.profiles.last().active }
+
+        assertEquals(ProfileRow("new-id", "Trip", active = true, oneTime = true, dnd = true), s.profiles.last())
+        runCurrent()
+        assertEquals(listOf("focus/rules?profile=new-id"), routes)
+
+        vm.editProfile("p2")
+        runCurrent()
+        vm.openSchedule()
+        runCurrent()
+        assertEquals(listOf("focus/rules?profile=new-id", "focus/rules?profile=p2", "focus/schedule"), routes)
+        job.cancel()
+    }
+
+    @Test
+    fun `rename and delete are persisted, and a failure shows its cause until the next action works`() = runTest {
+        val settings = FakeSettingsStore(twoProfiles)
+        val actions = FakeFocusActions(settings)
+        val vm = vm(settings, actions)
+        vm.loaded()
+
+        vm.renameProfile("p2", "Night")
+        assertEquals("Night", vm.state.first { it.profiles.last().name == "Night" }.profiles.last().name)
+
+        actions.rulesError = IllegalStateException("disk full")
+        vm.deleteProfile("p2")
+        assertEquals("disk full", vm.state.first { it.lastFocusError != null }.lastFocusError)
+        assertEquals(2, settings.state.value.profiles.list.size)
+
+        actions.rulesError = null
+        vm.deleteProfile("p2")
+        val s = vm.state.first { it.profiles.size == 1 }
+        assertNull(s.lastFocusError)
+    }
+
+    @Test
+    fun `the schedule shows what is in force now, when it changes next, and when a manual choice stands`() = runTest {
+        // The clock says Wednesday 13:17 UTC; stored as off, but an entry has been running since 13:00.
+        val entry = ScheduleEntry("e", "p2", setOf(3), 13 * 60, 15 * 60)
+        val settings = FakeSettingsStore(twoProfiles.withScheduleEntry(entry))
+        val vm = vm(settings)
+
+        val s = vm.loaded()
+        assertTrue(s.enabled, "shown as the gate treats it, before the alarm wrote it down")
+        assertEquals(listOf(false, true), s.profiles.map { it.active })
+        assertEquals(ScheduleStatus.Following(now + 103 * 60_000L), s.schedule)
+
+        val midnight = Instant.parse("2024-01-11T00:00:00Z").toEpochMilli()
+        settings.update { it.copy(focusEnabled = false).withManualHold(now, ZoneOffset.UTC) }
+        val manual = vm.state.first { it.schedule is ScheduleStatus.Manual }
+        assertEquals(ScheduleStatus.Manual(midnight), manual.schedule)
+        assertFalse(manual.enabled)
+
+        vm.resumeSchedule()
+        assertIs<ScheduleStatus.Following>(vm.state.first { it.schedule is ScheduleStatus.Following }.schedule)
+    }
+
+    @Test
+    fun `a Do Not Disturb failure is shown`() = runTest {
+        val settings = FakeSettingsStore(twoProfiles.let { it.copy(profiles = it.profiles.copy(dndError = "no access")) })
+        assertEquals("no access", vm(settings).loaded().dndError)
     }
 }

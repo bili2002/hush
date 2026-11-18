@@ -6,6 +6,11 @@ import com.hush.app.focus.FocusRules
 import com.hush.app.focus.INSTANT
 import com.hush.app.focus.MUTED
 import com.hush.app.focus.Presets
+import com.hush.app.focus.ProfileConfig
+import com.hush.app.focus.activeProfile
+import com.hush.app.focus.liveConfig
+import com.hush.app.focus.profile
+import com.hush.app.focus.withProfileAdded
 import com.hush.app.settings.Settings
 import com.hush.app.testing.FakeFocusActions
 import com.hush.app.testing.FakeSettingsStore
@@ -73,6 +78,7 @@ class RulesViewModelTest {
         settings: FakeSettingsStore = FakeSettingsStore(seeded),
         actions: FakeFocusActions = FakeFocusActions(settings),
         osCategory: (String) -> Int? = { null },
+        profile: String? = null,
     ): RulesViewModel = RulesViewModel(
         settings = settings,
         actions = actions,
@@ -82,6 +88,7 @@ class RulesViewModelTest {
         categories = osCategory,
         signals = signals,
         newId = { "new-id" },
+        profileArg = profile,
     ).also { vms += it }
 
     @After
@@ -386,6 +393,42 @@ class RulesViewModelTest {
         assertEquals(240, vm.state.first { it.chatThrottle != null }.chatThrottle?.ruleMinutes)
         vm.setChatThrottle(null)
         assertTrue(settings.state.first { it.rules.chatRules.isEmpty() }.rules.chatRules.isEmpty())
+    }
+
+    @Test
+    fun `the screen edits the profile it was opened for and leaves the active one alone`() = runTest {
+        val two = seeded.withProfileAdded("p2", "Evening", copyOf = null, oneTime = false)
+        val settings = FakeSettingsStore(two)
+        val vm = vm(settings, profile = "p2")
+
+        val s = vm.loaded()
+        assertEquals("Evening", s.profileName)
+        assertEquals(60, s.groups.first().effectiveMinutes, "an empty profile: the group follows the default")
+        assertTrue(s.chatRules.isEmpty())
+
+        vm.setCategoryMinutes("fast", MUTED)
+        vm.setDefaultMinutes(30)
+        vm.setDnd(true)
+        val after = vm.state.first { it.dnd && it.defaultMinutes == 30 && it.groups.first().minutes == MUTED }
+        assertEquals(30, after.groups.last().effectiveMinutes)
+
+        val stored = settings.state.value
+        assertEquals(seeded.liveConfig, stored.liveConfig, "the active profile kept its throttles")
+        assertFalse(stored.activeProfile.dnd)
+        assertEquals(ProfileConfig(30, mapOf("fast" to MUTED)), stored.profile("p2")?.config)
+
+        vm.stopHolding(beta)
+        assertEquals(setOf(alpha), settings.state.first { beta !in it.holdPackages }.holdPackages, "the hold list is shared")
+    }
+
+    @Test
+    fun `with one profile it is not named, and an unknown profile falls back to the active one`() = runTest {
+        assertNull(vm().loaded().profileName)
+
+        val two = seeded.withProfileAdded("p2", "Evening", copyOf = null, oneTime = false)
+        val fallback = vm(FakeSettingsStore(two), profile = "deleted-meanwhile").loaded()
+        assertEquals("Default", fallback.profileName)
+        assertEquals(15, fallback.groups.first().effectiveMinutes)
     }
 
     @Test

@@ -1,23 +1,31 @@
 package com.hush.app.ui.rules
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hush.app.db.NotificationRepository
 import com.hush.app.focus.CategoryGroup
 import com.hush.app.focus.ChatRule
 import com.hush.app.focus.FocusActions
+import com.hush.app.focus.FocusProfile
 import com.hush.app.focus.INSTANT
 import com.hush.app.focus.Presets
+import com.hush.app.focus.activeProfile
 import com.hush.app.focus.appThrottleMinutes
 import com.hush.app.focus.categoryGroups
 import com.hush.app.focus.chatRule
+import com.hush.app.focus.profile
+import com.hush.app.focus.profileList
 import com.hush.app.focus.seededWithPresets
+import com.hush.app.focus.viewOf
 import com.hush.app.focus.withAutoSorted
 import com.hush.app.focus.withAppInCategory
 import com.hush.app.focus.withCategoryAdded
 import com.hush.app.focus.withCategoryMinutes
 import com.hush.app.focus.withCategoryRenamed
 import com.hush.app.focus.withChatRule
+import com.hush.app.focus.withProfileDnd
+import com.hush.app.focus.withProfileEdited
 import com.hush.app.focus.withoutCategory
 import com.hush.app.focus.withoutChatRule
 import com.hush.app.focus.withoutHeldApp
@@ -61,6 +69,10 @@ data class ChatPicker(val packageName: String?, val appLabel: String?, val items
 
 data class RulesUiState(
     val loading: Boolean = true,
+    /** The profile being edited, named only when there is more than one to tell apart. */
+    val profileName: String? = null,
+    /** The profile turns Do Not Disturb on while Focus runs with it. */
+    val dnd: Boolean = false,
     val defaultMinutes: Int = 60,
     /** Every category (empty ones too, so they can be filled), then the uncategorised held apps. */
     val groups: List<CategoryGroup> = emptyList(),
@@ -94,10 +106,13 @@ class RulesViewModel(
     private val categories: AppCategoryResolver,
     private val signals: UiSignals,
     private val newId: () -> String,
+    /** The profile this screen edits; null (or one that no longer exists) = whichever is active. */
+    private val profileArg: String?,
 ) : ViewModel() {
 
     @Inject
     constructor(
+        savedStateHandle: SavedStateHandle,
         settings: SettingsStore,
         actions: FocusActions,
         repo: NotificationRepository,
@@ -105,7 +120,9 @@ class RulesViewModel(
         labels: AppLabelResolver,
         categories: AppCategoryResolver,
         signals: UiSignals,
-    ) : this(settings, actions, repo, appsSource, labels, categories, signals, { UUID.randomUUID().toString() })
+    ) : this(settings, actions, repo, appsSource, labels, categories, signals, { UUID.randomUUID().toString() }, savedStateHandle[Routes.ARG_PROFILE])
+
+    private fun profileOf(s: Settings): FocusProfile = profileArg?.let(s::profile) ?: s.activeProfile
 
     private val overlay = MutableStateFlow(Overlay())
 
@@ -125,9 +142,14 @@ class RulesViewModel(
             }
         }
 
-    val state: StateFlow<RulesUiState> = combine(settings.settings, overlay, picker) { s, o, p ->
+    val state: StateFlow<RulesUiState> = combine(settings.settings, overlay, picker) { all, o, p ->
+        val profile = profileOf(all)
+        // The settings as they would be with this profile active: every rule function reads it unchanged.
+        val s = all.viewOf(profile.id)
         RulesUiState(
             loading = !s.rules.seeded,
+            profileName = profile.name.takeIf { all.profileList.size > 1 },
+            dnd = profile.dnd,
             defaultMinutes = s.slotMinutes,
             groups = s.categoryGroups(labels::label),
             chatRules = s.rules.chatRules
@@ -192,7 +214,12 @@ class RulesViewModel(
         if (added > 0 || reportNothing) overlay.update { it.copy(autoSorted = added) }
     }
 
-    fun setDefaultMinutes(minutes: Int) = edit { actions.setSlotMinutes(minutes) }
+    fun setDnd(on: Boolean) = edit { actions.updateRules { it.withProfileDnd(profileOf(it).id, on) } }
+
+    fun setDefaultMinutes(minutes: Int) {
+        require(minutes > 0) { "the default interval must be positive, was $minutes" }
+        update { it.copy(slotMinutes = minutes) }
+    }
 
     /** [minutes] null = follow the default interval. */
     fun setCategoryMinutes(id: String, minutes: Int?) = update { it.withCategoryMinutes(id, minutes) }
@@ -261,7 +288,8 @@ class RulesViewModel(
         overlay.update { it.copy(error = null) }
     }
 
-    private fun update(transform: (Settings) -> Settings) = edit { actions.updateRules(transform) }
+    /** A rule edit lands in the profile this screen is for, active or not. */
+    private fun update(transform: (Settings) -> Settings) = edit { actions.updateRules { it.withProfileEdited(profileOf(it).id, transform) } }
 
     /**
      * A rule edit also re-runs delivery; if that (or the write) fails, say why instead of silently

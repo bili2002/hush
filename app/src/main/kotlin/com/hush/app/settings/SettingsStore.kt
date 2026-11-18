@@ -11,8 +11,10 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import com.hush.app.focus.FocusProfiles
 import com.hush.app.focus.FocusRules
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 
 interface SettingsStore {
@@ -35,8 +37,13 @@ data class Settings(
     val lastSyncError: String? = null,
     val lastFocusError: String? = null,
     val setupDone: Boolean = false,
-    /** Categories, per-category intervals and chat rules; see `focus/FocusRules.kt`. */
+    /**
+     * Categories, per-category intervals and chat rules; see `focus/FocusRules.kt`. Together with
+     * [slotMinutes] this is the configuration of the active Focus profile.
+     */
     val rules: FocusRules = FocusRules(),
+    /** The other profiles, the schedule and their bookkeeping; see `focus/FocusProfiles.kt`. */
+    val profiles: FocusProfiles = FocusProfiles(),
 )
 
 /** Preferences-DataStore backed [SettingsStore]. Absent keys read as [Settings] defaults. */
@@ -50,10 +57,10 @@ class DataStoreSettingsStore(private val dataStore: DataStore<Preferences>) : Se
         dataStore.edit { prefs ->
             val before = prefs.toSettings()
             val after = block(before)
-            // The rules blob is rewritten only by a rules edit. Every other write (listener and sync stamps
+            // The rules and profiles blobs are rewritten only by an edit of theirs. Every other write (listener and sync stamps
             // land here all day) leaves it alone, so a blob this build could not read is not silently
             // replaced by "no rules" and is still there for a build that can read it.
-            prefs.write(after, writeRules = after.rules != before.rules)
+            prefs.write(after, writeRules = after.rules != before.rules, writeProfiles = after.profiles != before.profiles)
         }
     }
 
@@ -72,16 +79,22 @@ class DataStoreSettingsStore(private val dataStore: DataStore<Preferences>) : Se
         val lastFocusError = stringPreferencesKey("last_focus_error")
         val setupDone = booleanPreferencesKey("setup_done")
         val rules = stringPreferencesKey("focus_rules")
+        val profiles = stringPreferencesKey("focus_profiles")
     }
 
     /** A blob this build cannot read (corrupt, or a shape from a newer build) means "no rules", never a crash. */
-    private fun decodeRules(raw: String?): FocusRules {
-        raw ?: return FocusRules()
+    private fun decodeRules(raw: String?): FocusRules = decode(raw, FocusRules.serializer(), "focus rules") ?: FocusRules()
+
+    /** Likewise: unreadable profiles mean the live settings are the only profile. */
+    private fun decodeProfiles(raw: String?): FocusProfiles = decode(raw, FocusProfiles.serializer(), "focus profiles") ?: FocusProfiles()
+
+    private fun <T> decode(raw: String?, serializer: KSerializer<T>, what: String): T? {
+        raw ?: return null
         return try {
-            json.decodeFromString(FocusRules.serializer(), raw)
+            json.decodeFromString(serializer, raw)
         } catch (e: IllegalArgumentException) { // SerializationException is one
-            Log.w(TAG, "focus rules unreadable, falling back to none: ${e.javaClass.simpleName}")
-            FocusRules()
+            Log.w(TAG, "$what unreadable, falling back to none: ${e.javaClass.simpleName}")
+            null
         }
     }
 
@@ -102,10 +115,11 @@ class DataStoreSettingsStore(private val dataStore: DataStore<Preferences>) : Se
             lastFocusError = this[Keys.lastFocusError],
             setupDone = this[Keys.setupDone] ?: d.setupDone,
             rules = decodeRules(this[Keys.rules]),
+            profiles = decodeProfiles(this[Keys.profiles]),
         )
     }
 
-    private fun androidx.datastore.preferences.core.MutablePreferences.write(s: Settings, writeRules: Boolean) {
+    private fun androidx.datastore.preferences.core.MutablePreferences.write(s: Settings, writeRules: Boolean, writeProfiles: Boolean) {
         this[Keys.serverUrl] = s.serverUrl
         this[Keys.token] = s.token
         this[Keys.focusEnabled] = s.focusEnabled
@@ -120,6 +134,7 @@ class DataStoreSettingsStore(private val dataStore: DataStore<Preferences>) : Se
         setOrRemove(Keys.lastFocusError, s.lastFocusError)
         this[Keys.setupDone] = s.setupDone
         if (writeRules) this[Keys.rules] = json.encodeToString(FocusRules.serializer(), s.rules)
+        if (writeProfiles) this[Keys.profiles] = json.encodeToString(FocusProfiles.serializer(), s.profiles)
     }
 
     private fun <T> androidx.datastore.preferences.core.MutablePreferences.setOrRemove(key: Preferences.Key<T>, value: T?) {

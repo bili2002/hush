@@ -9,9 +9,18 @@ import com.hush.app.focus.DeliverResult
 import com.hush.app.focus.Deliverer
 import com.hush.app.focus.DeliveryScheduler
 import com.hush.app.focus.FocusActions
+import com.hush.app.focus.activeProfile
 import com.hush.app.focus.categoryGroups
+import com.hush.app.focus.hasSchedule
 import com.hush.app.focus.holdsAnything
+import com.hush.app.focus.manualHold
+import com.hush.app.focus.nextScheduleChange
+import com.hush.app.focus.profileList
+import com.hush.app.focus.reconciled
 import com.hush.app.focus.throttleMinutes
+import com.hush.app.focus.withProfileAdded
+import com.hush.app.focus.withProfileRenamed
+import com.hush.app.focus.withoutProfile
 import com.hush.app.settings.Settings
 import com.hush.app.settings.SettingsStore
 import com.hush.app.ui.Routes
@@ -23,6 +32,7 @@ import com.hush.app.ui.components.snapshot
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.Clock
 import java.time.ZoneId
+import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -55,9 +65,26 @@ sealed interface ListenerHealth {
     data object Disconnected : ListenerHealth
 }
 
+/** One row of the profile list. */
+data class ProfileRow(val id: String, val name: String, val active: Boolean, val oneTime: Boolean, val dnd: Boolean)
+
+/** What the schedule is doing, when there is one. */
+sealed interface ScheduleStatus {
+    /** The schedule decides; [nextChangeAt] is when it next switches something. */
+    data class Following(val nextChangeAt: Long?) : ScheduleStatus
+
+    /** A manual choice stands until [until] (midnight); the schedule waits. */
+    data class Manual(val until: Long) : ScheduleStatus
+}
+
 data class FocusUiState(
     val loading: Boolean = true,
     val enabled: Boolean = false,
+    val profiles: List<ProfileRow> = emptyList(),
+    /** Null = no schedule set up. */
+    val schedule: ScheduleStatus? = null,
+    /** Why Do Not Disturb could not be switched for the active profile. */
+    val dndError: String? = null,
     val heldCount: Long = 0,
     /** Epoch millis of the next digest; the screen formats it in the device zone. */
     val nextSlotAt: Long? = null,
@@ -84,7 +111,12 @@ data class FocusUiState(
     val onButGated: Boolean get() = enabled && gateReasons.isNotEmpty()
 }
 
-private data class Local(val delivering: Boolean = false, val deliverResult: DeliverResult? = null)
+private data class Local(
+    val delivering: Boolean = false,
+    val deliverResult: DeliverResult? = null,
+    /** The real cause of a profile or schedule action that failed, until the next one succeeds. */
+    val actionError: String? = null,
+)
 
 @HiltViewModel
 class FocusViewModel(
@@ -97,6 +129,7 @@ class FocusViewModel(
     private val clock: Clock,
     private val zone: ZoneId,
     tickMillis: Long,
+    private val newId: () -> String,
 ) : ViewModel() {
 
     @Inject
@@ -108,7 +141,7 @@ class FocusViewModel(
         labels: AppLabelResolver,
         signals: UiSignals,
         clock: Clock,
-    ) : this(settings, repo, actions, systemStatus, labels, signals, clock, ZoneId.systemDefault(), 60_000L)
+    ) : this(settings, repo, actions, systemStatus, labels, signals, clock, ZoneId.systemDefault(), 60_000L, { UUID.randomUUID().toString() })
 
     private val system = MutableStateFlow(systemStatus.snapshot())
     private val local = MutableStateFlow(Local())
@@ -142,7 +175,11 @@ class FocusViewModel(
         holdsSomething = s.holdsAnything,
     )
 
-    private fun build(s: Settings, held: List<NotificationEvent>, sys: SystemSnapshot, now: Long, loc: Local): FocusUiState {
+    private fun build(stored: Settings, held: List<NotificationEvent>, sys: SystemSnapshot, now: Long, loc: Local): FocusUiState {
+        // What the schedule makes of the settings right now, as the gate sees them; the alarm that writes
+        // it down can be a few minutes behind.
+        val s = stored.reconciled(now, zone)
+        val active = s.activeProfile
         val gate = buildList {
             if (!sys.listenerEnabled) add(GateReason.NO_LISTENER_ACCESS)
             if (!sys.postNotificationsGranted) add(GateReason.NO_POST_PERMISSION)
@@ -159,6 +196,13 @@ class FocusViewModel(
         return FocusUiState(
             loading = false,
             enabled = s.focusEnabled,
+            profiles = s.profileList.map { ProfileRow(it.id, it.name, active = it.id == active.id, oneTime = it.oneTime, dnd = it.dnd) },
+            schedule = when {
+                !s.hasSchedule -> null
+                s.manualHold(now) -> ScheduleStatus.Manual(s.profiles.manualUntil ?: now)
+                else -> ScheduleStatus.Following(s.nextScheduleChange(now, zone))
+            },
+            dndError = s.profiles.dndError,
             heldCount = held.size.toLong(),
             nextSlotAt = nextDigestAt(s, held, now),
             groups = s.categoryGroups(labels::label).filter { it.apps.isNotEmpty() },
@@ -166,7 +210,7 @@ class FocusViewModel(
             gateReasons = gate,
             checklist = if (s.setupDone || checklist.allDone) null else checklist,
             listener = listener,
-            lastFocusError = s.lastFocusError,
+            lastFocusError = loc.actionError ?: s.lastFocusError,
             delivering = loc.delivering,
             deliverResult = loc.deliverResult,
         )
@@ -188,8 +232,51 @@ class FocusViewModel(
         system.value = systemStatus.snapshot()
     }
 
-    fun setEnabled(enabled: Boolean) {
-        viewModelScope.launch { actions.setEnabled(enabled) }
+    fun setEnabled(enabled: Boolean) = act { actions.setEnabled(enabled) }
+
+    fun selectProfile(id: String) = act { actions.selectProfile(id) }
+
+    fun resumeSchedule() = act { actions.resumeSchedule() }
+
+    /**
+     * A new profile, empty or a copy of [copyOf], opened for editing. A one-time profile is for
+     * right now, so it is also switched to.
+     */
+    fun addProfile(name: String, copyOf: String?, oneTime: Boolean) {
+        if (name.isBlank()) return
+        val id = newId()
+        act {
+            actions.updateRules { it.withProfileAdded(id, name, copyOf, oneTime) }
+            if (oneTime) actions.selectProfile(id)
+            signals.requestNavigation(Routes.focusRules(id))
+        }
+    }
+
+    fun renameProfile(id: String, name: String) {
+        if (name.isNotBlank()) act { actions.updateRules { it.withProfileRenamed(id, name) } }
+    }
+
+    fun deleteProfile(id: String) = act { actions.updateRules { it.withoutProfile(id) } }
+
+    fun editProfile(id: String) {
+        signals.requestNavigation(Routes.focusRules(id))
+    }
+
+    fun openSchedule() {
+        signals.requestNavigation(Routes.FOCUS_SCHEDULE)
+    }
+
+    private fun act(block: suspend () -> Unit) {
+        viewModelScope.launch {
+            try {
+                block()
+                local.update { it.copy(actionError = null) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                local.update { it.copy(actionError = e.message ?: e.javaClass.simpleName) }
+            }
+        }
     }
 
     fun deliverNow() {

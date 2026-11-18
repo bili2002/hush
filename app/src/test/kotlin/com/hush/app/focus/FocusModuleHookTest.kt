@@ -3,6 +3,7 @@ package com.hush.app.focus
 import android.app.NotificationManager
 import android.content.Context
 import com.hush.app.settings.Settings
+import com.hush.app.testing.FakeDnd
 import com.hush.app.testing.FakeSettingsStore
 import com.hush.app.testing.event
 import com.hush.app.testing.fixedClock
@@ -35,7 +36,7 @@ class FocusModuleHookTest {
         val clock = fixedClock(now)
         val repo = testRepository(clock)
         val settings = FakeSettingsStore(Settings(focusEnabled = true, holdPackages = setOf("com.example.alpha")))
-        val hook = FocusModule.deliverDueHook(Deliverer(ctx, repo, settings, clock, DeliveryScheduler(ctx, settings)))
+        val hook = FocusModule.deliverDueHook(Deliverer(ctx, repo, settings, clock, DeliveryScheduler(ctx, settings), FocusAutomation(settings, FakeDnd())))
 
         repo.insert(event("fresh", postTime = now - 60_000L, held = true))
         hook.deliverDue()

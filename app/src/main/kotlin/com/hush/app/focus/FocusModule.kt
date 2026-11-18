@@ -22,6 +22,10 @@ abstract class FocusModule {
     abstract fun focusGate(impl: HoldGate): FocusGate
 
     @Binds
+    @Singleton
+    abstract fun dndController(impl: AndroidDndController): DndController
+
+    @Binds
     @IntoSet
     abstract fun focusInitializer(impl: FocusInitializer): AppInitializer
 

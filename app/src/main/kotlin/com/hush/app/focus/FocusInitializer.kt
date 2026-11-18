@@ -10,9 +10,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
 /**
- * Re-arms the slot alarm at process start while Focus is on. A force-stop (or a crash with a
- * missed `MY_PACKAGE_REPLACED`) clears our alarms; the next process start, usually the system
- * rebinding the listener, restores it so held rows never sit without a scheduled delivery.
+ * Re-arms the alarm at process start while Focus is on or a profile schedule exists. A force-stop
+ * (or a crash with a missed `MY_PACKAGE_REPLACED`) clears our alarms; the next process start,
+ * usually the system rebinding the listener, restores it so held rows never sit without a
+ * scheduled delivery and a scheduled start is not missed.
  */
 class FocusInitializer @Inject constructor(
     private val settings: SettingsStore,
@@ -22,7 +23,8 @@ class FocusInitializer @Inject constructor(
 ) : AppInitializer {
     override fun init(app: Application) {
         scope.launch {
-            if (settings.current().focusEnabled) scheduler.schedule(clock.millis())
+            val current = settings.current()
+            if (current.focusEnabled || current.hasSchedule) scheduler.rearm(clock.millis(), held = false)
         }
     }
 }

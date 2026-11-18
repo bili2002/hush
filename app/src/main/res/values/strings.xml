@@ -115,6 +115,8 @@
 
     <!-- Apps & throttles screen -->
     <string name="rules_title">Apps &amp; throttles</string>
+    <string name="rules_title_profile">%1$s · throttles</string>
+    <string name="rules_dnd">Do Not Disturb</string>
     <string name="rules_default_title">Default interval</string>
     <string name="rules_use_default">Default (%1$s)</string>
     <string name="rules_uncategorised">Other held apps</string>
@@ -145,6 +147,30 @@
     <string name="rules_retry">Retry</string>
     <string name="rules_app_options">Move or stop holding %1$s</string>
     <string name="rules_error">Couldn\'t apply that change: %1$s</string>
+
+    <!-- Profiles and schedule -->
+    <string name="profiles_title">Profiles</string>
+    <string name="profiles_new">New profile</string>
+    <string name="profiles_name">Name</string>
+    <string name="profiles_copy_of">Copy of</string>
+    <string name="profiles_copy_none">Nothing (empty)</string>
+    <string name="profiles_copy_name">%1$s copy</string>
+    <string name="profiles_one_time">One-time</string>
+    <string name="profiles_options">Options for %1$s</string>
+    <string name="profiles_edit">Apps &amp; throttles</string>
+    <string name="profiles_rename">Rename</string>
+    <string name="profiles_duplicate">Duplicate</string>
+    <string name="profiles_delete">Delete</string>
+    <string name="profiles_dnd">Do Not Disturb</string>
+    <string name="schedule_title">Schedule</string>
+    <string name="schedule_add">Add</string>
+    <string name="schedule_remove">Remove</string>
+    <string name="schedule_next_day">next day</string>
+    <string name="schedule_following">Schedule · next change %1$s</string>
+    <string name="schedule_following_idle">Schedule</string>
+    <string name="schedule_manual">Manual until midnight</string>
+    <string name="schedule_resume">Resume schedule</string>
+    <string name="focus_dnd_error">Do Not Disturb: %1$s</string>
 
     <!-- History screen -->
     <string name="history_title">History</string>

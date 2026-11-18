@@ -17,7 +17,7 @@ data class NotificationEvent(
     val event: EventType,
     val removedReason: Int?,
     val held: Boolean,
-    // Stamps are set by markDelivered / markSynced, never by insert; defaults keep construction sites short.
+    // Stamps are set by markDelivered / markSynced (and by a muted insert), never taken from the caller.
     val deliveredAt: Long? = null,
     val syncedAt: Long? = null,
     /** Stable id of the conversation (shortcut id, or the MessagingStyle title); null when the notification is not one. */

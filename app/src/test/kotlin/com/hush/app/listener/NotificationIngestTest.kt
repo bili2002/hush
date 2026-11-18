@@ -113,6 +113,7 @@ class NotificationIngestTest {
         assertTrue(row.muted)
         assertEquals(listOf(s.key), cancelled)
         assertTrue(repo.selectHeldUndelivered().isEmpty(), "nothing is left for the deliverer")
+        assertEquals(1, repo.countUnsynced().first(), "it is synced like any other row")
         assertTrue(repo.selectHeldBatch(since = 1L).isEmpty(), "and no digest view lists it")
     }
 

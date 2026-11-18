@@ -91,7 +91,8 @@ data class RulesCallbacks(
     val onAutoSort: () -> Unit = {},
     /** Null = start from the app list. */
     val onAddChatRule: (String?) -> Unit = {},
-    val onPick: (SheetItem) -> Unit = {},
+    /** The step the row was shown in (null = the app list), and the row. */
+    val onPick: (String?, SheetItem) -> Unit = { _, _ -> },
     val onDismissPicker: () -> Unit = {},
     val onChatThrottle: (Int?) -> Unit = {},
     val onDismissChatThrottle: () -> Unit = {},
@@ -195,7 +196,7 @@ fun RulesContent(state: RulesUiState, callbacks: RulesCallbacks) {
             }
             item(key = "actions") {
                 Column {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Button(onClick = callbacks.onAddApps) { Text(stringResource(R.string.rules_add_apps)) }
                         OutlinedButton(onClick = { nameDialog = NameDialog(null, "") }) { Text(stringResource(R.string.rules_new_category)) }
                         OutlinedButton(onClick = callbacks.onAutoSort) { Text(stringResource(R.string.rules_auto_sort)) }
@@ -232,7 +233,8 @@ fun RulesContent(state: RulesUiState, callbacks: RulesCallbacks) {
                 searchHint = stringResource(if (picker.packageName == null) R.string.history_sheet_search_apps else R.string.history_sheet_search_chats),
                 items = picker.items,
                 selectedKey = null,
-                onPick = { key -> picker.items.firstOrNull { it.key == key }?.let(callbacks.onPick) },
+                emptyLabel = stringResource(if (picker.packageName == null) R.string.history_sheet_no_matches else R.string.rules_no_chats),
+                onPick = { key -> picker.items.firstOrNull { it.key == key }?.let { callbacks.onPick(picker.packageName, it) } },
                 onDismiss = callbacks.onDismissPicker,
             )
         }

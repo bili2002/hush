@@ -134,6 +134,7 @@
     <string name="rules_add_chat">Add</string>
     <string name="rules_chat_rule_for">Chat rule…</string>
     <string name="rules_pick_app">Choose app</string>
+    <string name="rules_no_chats">No chats recorded</string>
     <string name="rules_auto_sort">Auto-sort apps</string>
     <string name="rules_auto_sorted_none">Nothing to add</string>
     <plurals name="rules_auto_sorted">

@@ -20,6 +20,7 @@ import com.hush.app.ui.components.SheetItem
 import com.hush.app.ui.components.UiSignals
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineStart
@@ -46,11 +47,14 @@ class RulesViewModelTest {
     /** What the phone has installed; a test that needs the scan to fail sets [installedError]. */
     private var installed = emptyList<String>()
     private var installedError: Exception? = null
+    private var smsApp: String? = null
     private val appsSource = object : InstalledAppsSource {
         override suspend fun launchable(): List<InstalledApp> {
             installedError?.let { throw it }
             return installed.map { InstalledApp(it, it) }
         }
+
+        override fun defaultSmsPackage(): String? = smsApp
     }
 
     /** Already seeded with one group, so most tests start from a small known state. */
@@ -225,18 +229,50 @@ class RulesViewModelTest {
 
     @Test
     fun `a first visit with nothing held sorts the installed and the seen apps into the presets`() = runTest {
-        installed = listOf("com.whatsapp", "com.example.game", "com.example.bank", Presets.neverAutomatic.first())
+        installed = listOf(
+            "com.whatsapp", "com.example.game", "com.example.bank", "com.example.signin", "com.example.texts", Presets.neverAutomatic.first(),
+        )
+        smsApp = "com.example.texts"
         repo.insert(event("n1", packageName = "com.example.paper"))
         val settings = FakeSettingsStore(Settings(excludedPackages = setOf("com.example.game")))
-        // CATEGORY_GAME = 0, CATEGORY_NEWS = 5
-        val s = vm(settings, osCategory = { mapOf("com.example.game" to 0, "com.example.paper" to 5)[it] }).state.first { it.autoSorted != null }
+        // CATEGORY_GAME = 0, CATEGORY_SOCIAL = 4, CATEGORY_NEWS = 5, CATEGORY_PRODUCTIVITY = 7
+        val os = mapOf("com.example.game" to 0, "com.example.paper" to 5, "com.example.signin" to 7, "com.example.texts" to 4)
+        val s = vm(settings, osCategory = os::get).state.first { it.autoSorted != null }
 
         assertEquals(2, s.autoSorted)
-        assertEquals(setOf("com.whatsapp", "com.example.paper"), settings.state.value.holdPackages, "no category, excluded and SMS apps are left alone")
+        assertEquals(
+            setOf("com.whatsapp", "com.example.paper"),
+            settings.state.value.holdPackages,
+            "no category, productivity, excluded and SMS apps (listed or the phone's default) are left alone",
+        )
         assertEquals(
             mapOf("com.whatsapp" to Presets.MESSAGING, "com.example.paper" to Presets.NEWS),
             settings.state.value.rules.appCategory,
         )
+    }
+
+    @Test
+    fun `a first visit while Focus is already on leaves the sort to the button`() = runTest {
+        installed = listOf("com.whatsapp")
+        val settings = FakeSettingsStore(Settings(focusEnabled = true, rules = FocusRules(chatRules = listOf(ChatRule(alpha, "c1", "Group one", 60)))))
+
+        val s = vm(settings).loaded()
+
+        assertNull(s.autoSorted)
+        assertTrue(settings.state.value.holdPackages.isEmpty(), "nothing starts being hidden just because the screen was opened")
+    }
+
+    @Test
+    fun `a first visit that finds nothing to sort says nothing, and one that cannot scan says why`() = runTest {
+        installed = listOf("com.example.bank")
+        val quiet = vm(FakeSettingsStore(Settings())).loaded()
+        assertNull(quiet.autoSorted)
+        assertNull(quiet.error)
+
+        installedError = IllegalStateException("package manager died")
+        val failed = vm(FakeSettingsStore(Settings())).state.first { it.error != null }
+        assertFalse(failed.loading, "the groups are there; only the sort failed, and the button retries it")
+        assertEquals("package manager died", failed.error)
     }
 
     @Test
@@ -298,12 +334,15 @@ class RulesViewModelTest {
         assertNull(apps.packageName)
         assertEquals(listOf(SheetItem(alpha, "Alpha", 2, alpha), SheetItem(beta, "Beta", 1, beta)), apps.items)
 
-        vm.pick(apps.items.first())
+        vm.pick(null, apps.items.first())
+        vm.pick(null, apps.items.first())
+        runCurrent()
+        assertNull(vm.state.value.chatThrottle, "a second tap on the app list is not taken for a chat")
         val chats = vm.state.first { it.chatPicker?.packageName == alpha }.chatPicker!!
         assertEquals("Alpha", chats.appLabel)
         assertEquals(listOf(SheetItem("c9", "Group nine", 2, null)), chats.items)
 
-        vm.pick(chats.items.single())
+        vm.pick(alpha, chats.items.single())
         val asking = vm.state.first { it.chatThrottle != null }
         assertNull(asking.chatPicker, "the sheet closes when the chat is picked")
         assertEquals(ChatThrottle(alpha, "c9", "Group nine", "Alpha", ruleMinutes = null, appMinutes = 15), asking.chatThrottle)
@@ -329,12 +368,12 @@ class RulesViewModelTest {
 
         vm.dismissChatPicker()
         assertNull(vm.state.first { it.chatPicker == null }.chatPicker)
-        vm.pick(chats.items.single())
+        vm.pick(beta, chats.items.single())
         runCurrent()
         assertNull(vm.state.value.chatThrottle, "a pick with no sheet open does nothing")
 
         vm.addChatRule(beta)
-        vm.pick(chats.items.single())
+        vm.pick(beta, chats.items.single())
         vm.state.first { it.chatThrottle != null }
         vm.dismissChatThrottle()
         assertNull(vm.state.first { it.chatThrottle == null }.chatThrottle)
@@ -343,7 +382,7 @@ class RulesViewModelTest {
         // "Same as app" for a chat that has a rule removes it.
         val existing = seeded.rules.chatRules.single()
         vm.addChatRule(alpha)
-        vm.pick(SheetItem(existing.chatKey, existing.title, 1, null))
+        vm.pick(alpha, SheetItem(existing.chatKey, existing.title, 1, null))
         assertEquals(240, vm.state.first { it.chatThrottle != null }.chatThrottle?.ruleMinutes)
         vm.setChatThrottle(null)
         assertTrue(settings.state.first { it.rules.chatRules.isEmpty() }.rules.chatRules.isEmpty())

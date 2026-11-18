@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.provider.Telephony
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
@@ -14,11 +15,16 @@ data class InstalledApp(val packageName: String, val label: String)
 /** Launchable apps on the device. Faked in tests; the real one scans the package manager. */
 interface InstalledAppsSource {
     suspend fun launchable(): List<InstalledApp>
+
+    /** The app that receives SMS on this phone, or null when there is none (tablet) or it cannot be told. */
+    fun defaultSmsPackage(): String? = null
 }
 
 class PackageManagerAppsSource @Inject constructor(
     @ApplicationContext private val ctx: Context,
 ) : InstalledAppsSource {
+
+    override fun defaultSmsPackage(): String? = runCatching { Telephony.Sms.getDefaultSmsPackage(ctx) }.getOrNull()
 
     /** Runs on IO: the scan + label loading takes a noticeable fraction of a second on a full phone. */
     override suspend fun launchable(): List<InstalledApp> = withContext(Dispatchers.IO) {

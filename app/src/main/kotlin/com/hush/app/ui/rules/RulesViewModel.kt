@@ -6,6 +6,7 @@ import com.hush.app.db.NotificationRepository
 import com.hush.app.focus.CategoryGroup
 import com.hush.app.focus.ChatRule
 import com.hush.app.focus.FocusActions
+import com.hush.app.focus.INSTANT
 import com.hush.app.focus.Presets
 import com.hush.app.focus.appThrottleMinutes
 import com.hush.app.focus.categoryGroups
@@ -32,12 +33,14 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -45,6 +48,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** One chat rule as the screen lists it. [appMinutes] is what the chat would get without the rule. */
 data class ChatRuleRow(val rule: ChatRule, val appLabel: String, val appMinutes: Int)
@@ -108,6 +112,7 @@ class RulesViewModel(
     /** What the open sheet lists; queried only while it is open. */
     private val picker: Flow<ChatPicker?> = overlay
         .map { if (it.picking) it.pickerApp to true else null to false }
+        .distinctUntilChanged()
         .flatMapLatest { (app, open) ->
             when {
                 !open -> flowOf(null)
@@ -149,9 +154,11 @@ class RulesViewModel(
     }
 
     /**
-     * First visit: create the presets and sort the already-held apps into them; with nothing held
-     * yet, the automatic sort fills the groups. The OS category lookups happen here, outside the
-     * settings transform. Also the "Retry" of a failed first visit.
+     * First visit: create the presets and sort the already-held apps into them. With nothing held
+     * yet and Focus off, the automatic sort then fills the groups; with Focus already on (through a
+     * chat rule) it is left to the button, because it would start hiding apps on the spot. The OS
+     * category lookups happen here, outside the settings transform. Also the "Retry" of a failed
+     * first visit.
      */
     fun seed() {
         edit {
@@ -159,25 +166,30 @@ class RulesViewModel(
             if (!current.rules.seeded) {
                 val osCategories = current.holdPackages.associateWith(categories::osCategory)
                 actions.updateRules { it.seededWithPresets(osCategories::get) }
-                if (current.holdPackages.isEmpty()) sortAutomatically()
+                // Unprompted, so it only speaks up when it did something.
+                if (current.holdPackages.isEmpty() && !current.focusEnabled) sortAutomatically(reportNothing = false)
             }
         }
     }
 
     /** Holds every app Hush can put in a preset group and is not held yet. */
-    fun autoSort() = edit(keepAutoSorted = true) { sortAutomatically() }
+    fun autoSort() = edit(keepAutoSorted = true) { sortAutomatically(reportNothing = true) }
 
-    private suspend fun sortAutomatically() {
+    private suspend fun sortAutomatically(reportNothing: Boolean) {
         val before = settings.current().holdPackages
-        // Installed apps plus anything that has notified: an app without a launcher icon can still be noisy.
-        val candidates = (appsSource.launchable().map { it.packageName } + repo.selectApps().first().map { it.packageName }).distinct()
-        val suggestions = candidates
-            .filterNot { it in before }
-            .mapNotNull { pkg -> Presets.suggest(pkg, categories.osCategory(pkg))?.let { pkg to it } }
-            .toMap()
+        // One package-manager call per app on the phone: not on the main thread.
+        val suggestions = withContext(Dispatchers.IO) {
+            val sms = appsSource.defaultSmsPackage()
+            // Installed apps plus anything that has notified: an app without a launcher icon can still be noisy.
+            (appsSource.launchable().map { it.packageName } + repo.selectApps().first().map { it.packageName })
+                .distinct()
+                .filterNot { it in before || it == sms }
+                .mapNotNull { pkg -> Presets.suggest(pkg, categories.osCategory(pkg), automatic = true)?.let { pkg to it } }
+                .toMap()
+        }
         actions.updateRules { it.withAutoSorted(suggestions) }
         val added = (settings.current().holdPackages - before).size
-        overlay.update { it.copy(autoSorted = added) }
+        if (added > 0 || reportNothing) overlay.update { it.copy(autoSorted = added) }
     }
 
     fun setDefaultMinutes(minutes: Int) = edit { actions.setSlotMinutes(minutes) }
@@ -213,14 +225,19 @@ class RulesViewModel(
         overlay.update { it.copy(picking = true, pickerApp = packageName) }
     }
 
-    /** A row of the sheet was picked: an app leads on to its chats, a chat to its throttle. */
-    fun pick(item: SheetItem) {
+    /**
+     * A row of the sheet was picked: an app leads on to its chats, a chat to its throttle. [step] is
+     * the [ChatPicker.packageName] of the list the row was shown in; a tap on a list that is no
+     * longer the current step (a second tap before the chats loaded) is ignored, or an app row
+     * would be taken for a chat.
+     */
+    fun pick(step: String?, item: SheetItem) {
         overlay.update { o ->
             when {
-                !o.picking -> o
+                !o.picking || step != o.pickerApp -> o
                 o.pickerApp == null -> o.copy(pickerApp = item.key)
                 // Minutes are a placeholder: the rule does not exist until the dialog's choice is applied.
-                else -> o.copy(picking = false, pickerApp = null, throttleFor = ChatRule(o.pickerApp, item.key, item.label, minutes = 0))
+                else -> o.copy(picking = false, pickerApp = null, throttleFor = ChatRule(o.pickerApp, item.key, item.label, minutes = INSTANT))
             }
         }
     }

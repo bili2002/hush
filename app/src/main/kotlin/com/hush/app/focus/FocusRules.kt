@@ -132,7 +132,8 @@ object Presets {
 
     /**
      * Never added by the automatic sort, whatever they would be sorted into: SMS apps, because
-     * login codes arrive there and an hour's delay locks the owner out. Adding one by hand still works.
+     * login codes arrive there and an hour's delay locks the owner out. The phone's actual default
+     * SMS app is excluded by the caller as well. Adding one by hand still works.
      */
     val neverAutomatic = setOf("com.google.android.apps.messaging", "com.samsung.android.messaging")
 
@@ -149,7 +150,6 @@ object Presets {
         ).forEach { put(it, SOCIAL) }
         listOf(
             "com.google.android.gm", "com.microsoft.office.outlook", "com.Slack", "com.microsoft.teams",
-            "com.google.android.calendar",
         ).forEach { put(it, WORK) }
         listOf(
             "com.amazon.mShop.android.shopping", "com.ebay.mobile", "com.alibaba.aliexpresshd", "com.einnovation.temu",
@@ -170,11 +170,15 @@ object Presets {
      * The preset a newly held app most likely belongs in, or null. A short table of well-known
      * packages first (the OS files messengers and social networks under one category), then the
      * app's own declared [osCategory].
+     *
+     * [automatic]: the app was not picked by the owner. "Productivity" is then no reason to hold
+     * it: that category is also what sign-in approval apps, calendars and task reminders declare,
+     * and none of those should be delayed without being asked.
      */
-    fun suggest(packageName: String, osCategory: Int?): String? = known[packageName] ?: when (osCategory) {
+    fun suggest(packageName: String, osCategory: Int?, automatic: Boolean = false): String? = known[packageName] ?: when (osCategory) {
         OS_SOCIAL -> SOCIAL
         OS_NEWS -> NEWS
-        OS_PRODUCTIVITY -> WORK
+        OS_PRODUCTIVITY -> WORK.takeIf { !automatic }
         OS_GAME, OS_AUDIO, OS_VIDEO -> MEDIA
         else -> null
     }
@@ -197,7 +201,7 @@ fun Settings.seededWithPresets(osCategory: (String) -> Int?): Settings {
 }
 
 /**
- * The automatic sort: holds every app in [suggestions] (package → preset id from [Presets.suggest])
+ * The automatic sort: holds every app in [suggestions] (package → preset id from [Presets.suggest], `automatic = true`)
  * that is not held yet, in its preset group. A preset group that was deleted is created again when
  * something is sorted into it. Apps already held, excluded from recording, or in
  * [Presets.neverAutomatic] are left alone.

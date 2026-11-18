@@ -19,7 +19,12 @@ class NotificationRepository @Inject constructor(
 ) {
     private val queries get() = db.notificationsQueries
 
-    suspend fun insert(e: NotificationEvent) = withContext(Dispatchers.IO) {
+    /**
+     * Stamps are never taken from [e]. [muted] records the row as hidden-for-good in the same
+     * statement ([NotificationEvent.MUTED_AT]), so there is no moment in which it looks held and a
+     * delivery run could pick it up.
+     */
+    suspend fun insert(e: NotificationEvent, muted: Boolean = false) = withContext(Dispatchers.IO) {
         queries.insert(
             id = e.id,
             key = e.key,
@@ -37,6 +42,7 @@ class NotificationRepository @Inject constructor(
             event = e.event.name,
             removed_reason = e.removedReason?.toLong(),
             held = e.held,
+            delivered_at = if (muted) NotificationEvent.MUTED_AT else null,
             created_at = clock.millis(),
             conversation_id = e.conversationId,
             conversation_title = e.conversationTitle,

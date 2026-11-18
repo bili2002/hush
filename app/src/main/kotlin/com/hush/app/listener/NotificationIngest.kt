@@ -3,7 +3,6 @@ package com.hush.app.listener
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
-import com.hush.app.db.NotificationEvent
 import com.hush.app.db.NotificationRepository
 import com.hush.app.di.ApplicationScope
 import com.hush.app.focus.Decision
@@ -28,8 +27,8 @@ import kotlinx.coroutines.withContext
  * [NonCancellable]; a cancel is attempted only after the insert returned, and only for HOLD and
  * MUTE. If the insert throws we log and leave the notification visible (fail open).
  *
- * MUTE is HOLD plus a stamp that closes the row at once ([NotificationEvent.MUTED_AT]). If the
- * stamp cannot be written the row is simply still held, and the next digest delivers it.
+ * MUTE is HOLD whose row is written already closed ([com.hush.app.db.NotificationEvent.MUTED_AT]), in the one
+ * insert: it never waits for a digest.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @Singleton
@@ -87,7 +86,7 @@ class NotificationIngest @Inject constructor(
 
         val row = event.copy(held = hide)
         try {
-            withContext(NonCancellable) { repo.insert(row) }
+            withContext(NonCancellable) { repo.insert(row, muted = decision == Decision.MUTE) }
         } catch (e: Exception) {
             Log.e(TAG, "insert failed for ${sbn.packageName}; leaving notification visible", e)
             return null
@@ -95,20 +94,13 @@ class NotificationIngest @Inject constructor(
         dedupe.remember(row)
         tapTargets.remember(row, sbn.notification.contentIntent)
 
-        if (decision == Decision.MUTE) {
-            try {
-                withContext(NonCancellable) { repo.markDelivered(listOf(row.id), NotificationEvent.MUTED_AT) }
-            } catch (e: Exception) {
-                // Still a held row: it shows up in the next digest instead of being muted. Never lost.
-                Log.w(TAG, "mute stamp failed for ${sbn.packageName}: ${e.javaClass.simpleName}")
-            }
-        }
         if (hide) {
             try {
                 cancel(sbn.key)
             } catch (e: RuntimeException) {
-                // SecurityException / listener not connected: the row stays held and the Focus max-age guard
-                // delivers it. Forget the key so an identical re-post is recorded (and cancelled) again.
+                // SecurityException / listener not connected: the notification stays visible. A held row is
+                // delivered by the Focus max-age guard at the latest; a muted one is already closed. Forget the
+                // key so an identical re-post is recorded (and cancelled) again.
                 Log.w(TAG, "cancelNotification failed for ${sbn.packageName}: ${e.javaClass.simpleName}")
                 dedupe.forget(sbn.key)
             }

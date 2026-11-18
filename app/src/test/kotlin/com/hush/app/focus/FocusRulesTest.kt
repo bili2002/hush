@@ -143,6 +143,8 @@ class FocusRulesTest {
         assertEquals(Presets.WORK, Presets.suggest("com.example.unknown", osCategory = 7))
         assertEquals(Presets.MEDIA, Presets.suggest("com.example.unknown", osCategory = 0), "games")
         assertNull(Presets.suggest("com.example.unknown", osCategory = 6), "maps")
+        assertNull(Presets.suggest("com.example.unknown", osCategory = 7, automatic = true), "productivity is only a hint for an app the owner picked")
+        assertEquals(Presets.WORK, Presets.suggest("com.Slack", osCategory = 7, automatic = true), "the table still places the known ones")
         assertNull(Presets.suggest("com.example.unknown", osCategory = null))
 
         val noNews = Settings(rules = FocusRules(categories = Presets.categories.filterNot { it.id == Presets.NEWS }))

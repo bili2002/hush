@@ -43,7 +43,7 @@ data class Checklist(
     val listenerAccess: Boolean,
     val postPermission: Boolean,
     val batteryExempt: Boolean,
-    /** The rules would hold something: a held app with an interval, or a holding chat rule. */
+    /** The rules would hide something: a held app that is not on "Instantly", or a chat rule that holds or mutes. */
     val holdsSomething: Boolean,
 ) {
     val allDone: Boolean get() = listenerAccess && postPermission && batteryExempt && holdsSomething
@@ -211,7 +211,7 @@ class FocusViewModel(
         local.update { it.copy(deliverResult = null) }
     }
 
-    /** Also the fix for "nothing would be held": the rules screen sorts apps in on a first visit, and holds the intervals. */
+    /** Also the fix for "nothing would be held": apps are added and given intervals there (on a first visit, sorted in automatically). */
     fun manageRules() {
         signals.requestNavigation(Routes.FOCUS_RULES)
     }

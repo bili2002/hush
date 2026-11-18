@@ -1,5 +1,6 @@
 package com.hush.app.ui.components
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -44,7 +45,11 @@ fun filterSheetItems(items: List<SheetItem>, query: String): List<SheetItem> {
     return items.filter { it.label.contains(q, ignoreCase = true) || it.key.contains(q, ignoreCase = true) }
 }
 
-/** A searchable bottom sheet to pick one of [items]. [allLabel] null = no "everything" row on top. */
+/**
+ * A searchable bottom sheet to pick one of [items]. With an [allLabel] it is a filter: an
+ * "everything" row on top and the current choice marked. Without one it is a step in a flow: rows
+ * are plain buttons. [emptyLabel] shows when there is nothing to list.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PickerSheet(
@@ -55,7 +60,9 @@ fun PickerSheet(
     selectedKey: String?,
     onPick: (String?) -> Unit,
     onDismiss: () -> Unit,
+    emptyLabel: String = stringResource(R.string.history_sheet_no_matches),
 ) {
+    val choosesOne = allLabel != null
     var search by rememberSaveable { mutableStateOf("") }
     val shown = filterSheetItems(items, search)
     // Fully expanded from the start: half height plus the keyboard would leave no room for the list.
@@ -89,12 +96,13 @@ fun PickerSheet(
                     selected = item.key == selectedKey,
                     iconPackage = item.iconPackage,
                     onClick = { onPick(item.key) },
+                    choosesOne = choosesOne,
                 )
             }
             if (shown.isEmpty()) {
                 item(key = "none") {
                     Text(
-                        stringResource(R.string.history_sheet_no_matches),
+                        if (items.isEmpty()) emptyLabel else stringResource(R.string.history_sheet_no_matches),
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
@@ -106,11 +114,15 @@ fun PickerSheet(
 }
 
 @Composable
-private fun SheetRow(label: String, count: Long?, selected: Boolean, iconPackage: String?, onClick: () -> Unit) {
+private fun SheetRow(label: String, count: Long?, selected: Boolean, iconPackage: String?, onClick: () -> Unit, choosesOne: Boolean = true) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+            // A filter is one-of-many with a current choice; a step in a flow is just a button.
+            .then(
+                if (choosesOne) Modifier.selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+                else Modifier.clickable(role = Role.Button, onClick = onClick),
+            )
             .padding(horizontal = 24.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

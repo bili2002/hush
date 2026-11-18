@@ -12,6 +12,7 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import com.hush.app.focus.FocusProfiles
+import com.hush.app.focus.INSTANT
 import com.hush.app.focus.FocusRules
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.KSerializer
@@ -104,7 +105,8 @@ class DataStoreSettingsStore(private val dataStore: DataStore<Preferences>) : Se
             serverUrl = this[Keys.serverUrl] ?: d.serverUrl,
             token = this[Keys.token] ?: d.token,
             focusEnabled = this[Keys.focusEnabled] ?: d.focusEnabled,
-            slotMinutes = this[Keys.slotMinutes] ?: d.slotMinutes,
+            // Never below "Instantly": a negative default would read as "Muted" for every held app without a group.
+            slotMinutes = (this[Keys.slotMinutes] ?: d.slotMinutes).coerceAtLeast(INSTANT),
             holdPackages = this[Keys.holdPackages] ?: d.holdPackages,
             excludedPackages = this[Keys.excludedPackages] ?: d.excludedPackages,
             logOngoing = this[Keys.logOngoing] ?: d.logOngoing,

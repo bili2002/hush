@@ -229,9 +229,10 @@ class RulesViewModel(
      * are held, and everything else of the held apps shows as usual. Never "Muted": a default that
      * hides every app without a group of its own is not something to reach by one tap.
      */
-    fun setDefaultMinutes(minutes: Int) {
+    fun setDefaultMinutes(minutes: Int) = update {
+        // Inside the edit: a value the screen should never offer ends up in the error line, not in a crash.
         require(minutes >= INSTANT) { "the default is an interval or Instantly, was $minutes" }
-        update { it.copy(slotMinutes = minutes) }
+        it.copy(slotMinutes = minutes)
     }
 
     /** [minutes] null = follow the default interval. */

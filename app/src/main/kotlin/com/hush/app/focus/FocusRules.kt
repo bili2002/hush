@@ -87,7 +87,7 @@ fun Settings.throttleMinutes(packageName: String, chatKey: String?): Int =
 fun Settings.activeThrottles(): Set<Int> =
     (holdPackages.map(::appThrottleMinutes) + rules.chatRules.map { it.minutes }).filter { it > INSTANT }.toSet()
 
-/** False when turning Focus on would change nothing: no held app and no chat rule that holds or mutes. */
+/** False when turning Focus on would change nothing: no held app with a throttle other than "Instantly", and no chat rule that holds or mutes. */
 val Settings.holdsAnything: Boolean
     get() = holdPackages.any { appThrottleMinutes(it) != INSTANT } || rules.chatRules.any { it.minutes != INSTANT }
 
@@ -103,7 +103,7 @@ fun Settings.withCategoryMinutes(id: String, minutes: Int?): Settings =
     copy(rules = rules.copy(categories = rules.categories.map { if (it.id == id) it.copy(minutes = minutes) else it }))
 
 /**
- * Deleting a category never un-holds its apps: they fall back to the default interval. Its
+ * Deleting a category never takes its apps off the hold list: they fall back to the default. Its
  * throttle is forgotten in every profile, so a group that later comes back under the same id (the
  * automatic sort re-creates presets) starts on the default everywhere and is not silently muted
  * by what a profile once said about the old one.

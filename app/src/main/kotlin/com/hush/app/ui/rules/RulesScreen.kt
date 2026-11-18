@@ -494,7 +494,8 @@ private fun ChatRuleRowItem(row: ChatRuleRow, callbacks: RulesCallbacks) {
 /**
  * The one throttle picker: a chip showing the current choice that drops down "inherit" (null),
  * "Instantly", the intervals and "Muted". [minutes] null = inheriting; [inheritLabel] null =
- * nothing to inherit from, so that option is not offered. "Custom…" opens [CustomThrottleDialog].
+ * nothing to inherit from, so that option is not offered. [offerMuted] false leaves "Muted" out
+ * (the default interval). "Custom…" opens [CustomThrottleDialog].
  */
 @Composable
 fun ThrottleChip(minutes: Int?, inheritLabel: String?, offerMuted: Boolean = true, onPick: (Int?) -> Unit) {

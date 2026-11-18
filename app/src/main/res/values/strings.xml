@@ -85,7 +85,7 @@
     <string name="focus_gate_title">Can\'t turn on yet</string>
     <string name="focus_gate_listener">Notification access is off</string>
     <string name="focus_gate_post">Notification permission not granted</string>
-    <string name="focus_gate_hold_list">No apps held</string>
+    <string name="focus_gate_hold_list">Nothing would be held</string>
     <string name="focus_checklist_title">Set up Hush</string>
     <string name="focus_checklist_listener">Notification access</string>
     <string name="focus_checklist_listener_hint">Greyed out? Tap it once, then App info → ⋮ → Allow restricted settings</string>
@@ -109,7 +109,7 @@
     <string name="throttle_hours">%1$d h</string>
     <string name="throttle_hours_minutes">%1$d h %2$d min</string>
     <string name="throttle_every">every %1$s</string>
-    <string name="throttle_not_held">not held</string>
+    <string name="throttle_instantly_lower">instantly</string>
     <string name="throttle_muted">Muted</string>
     <string name="throttle_muted_lower">muted</string>
     <string name="throttle_custom">Custom…</string>

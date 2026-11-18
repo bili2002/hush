@@ -57,7 +57,7 @@ class DefaultFocusActionsImplTest {
         settings.update { it.copy(holdPackages = emptySet()) }
         actions.setEnabled(true)
         assertFalse(settings.state.value.focusEnabled)
-        assertEquals("Nothing would be held — add an app, or give its group an interval", settings.state.value.lastFocusError)
+        assertEquals("Nothing would be held — add an app, or give a group or the default an interval", settings.state.value.lastFocusError)
         assertEquals(0, alarms.size)
     }
 

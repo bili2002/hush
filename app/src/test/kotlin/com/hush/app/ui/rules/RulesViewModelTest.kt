@@ -29,7 +29,7 @@ import com.hush.app.ui.components.SheetItem
 import com.hush.app.ui.components.UiSignals
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -465,7 +465,8 @@ class RulesViewModelTest {
         assertEquals(15, s.groups.first().effectiveMinutes, "a group with its own interval keeps it")
         assertEquals(INSTANT, s.groups.last().effectiveMinutes, "the apps without a group are no longer held")
 
-        assertFailsWith<IllegalArgumentException> { vm.setDefaultMinutes(MUTED) }
+        vm.setDefaultMinutes(MUTED)
+        assertNotNull(vm.state.first { it.error != null }.error, "refused, with its reason in the error line")
         assertEquals(INSTANT, settings.state.value.slotMinutes)
     }
 

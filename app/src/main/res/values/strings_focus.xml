@@ -8,7 +8,7 @@
     </plurals>
     <string name="focus_digest_since">since %1$s</string>
     <string name="focus_digest_no_text">(no text)</string>
-    <string name="focus_error_no_hold_apps">Nothing would be held — add an app, or give its group an interval</string>
+    <string name="focus_error_no_hold_apps">Nothing would be held — add an app, or give a group or the default an interval</string>
     <string name="focus_error_release_failed">Couldn\'t release un-muted notifications: %1$s</string>
     <string name="focus_dnd_no_access">Do Not Disturb access not granted</string>
     <string name="focus_error_notifications_denied">Notifications permission denied — digests can\'t be shown</string>

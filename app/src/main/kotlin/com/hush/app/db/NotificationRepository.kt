@@ -60,8 +60,6 @@ class NotificationRepository @Inject constructor(
     fun heldUndelivered(): Flow<List<NotificationEvent>> =
         queries.selectHeldUndelivered().asFlow().mapToList(Dispatchers.IO).map { rows -> rows.map { it.toEvent() } }
 
-    fun countHeld(): Flow<Long> = queries.countHeld().asFlow().mapToOne(Dispatchers.IO)
-
     fun countUnsynced(): Flow<Long> = queries.countUnsynced().asFlow().mapToOne(Dispatchers.IO)
 
     suspend fun selectUnsynced(limit: Int): List<NotificationEvent> = withContext(Dispatchers.IO) {

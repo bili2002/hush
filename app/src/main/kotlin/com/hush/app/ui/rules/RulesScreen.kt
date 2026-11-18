@@ -43,13 +43,18 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -80,6 +85,7 @@ data class RulesCallbacks(
     val onRemoveChatRule: (ChatRule) -> Unit = {},
     val onAddApps: () -> Unit = {},
     val onDismissError: () -> Unit = {},
+    val onRetrySeed: () -> Unit = {},
 )
 
 @Composable
@@ -100,17 +106,24 @@ fun RulesScreen(onBack: () -> Unit, vm: RulesViewModel = hiltViewModel()) {
             onRemoveChatRule = vm::removeChatRule,
             onAddApps = vm::addApps,
             onDismissError = vm::dismissError,
+            onRetrySeed = vm::seed,
         ),
     )
 }
 
-/** The name dialog is used for "new category" ([id] null) and "rename". */
+/** The name dialog is used for "new group" ([id] null) and "rename". */
 private data class NameDialog(val id: String?, val initial: String)
+
+/** Survives rotation like the text typed into the dialog does. */
+private val NameDialogSaver = listSaver<NameDialog?, String>(
+    save = { d -> if (d == null) emptyList() else listOf(d.id ?: "", d.initial, if (d.id == null) "new" else "rename") },
+    restore = { l -> if (l.isEmpty()) null else NameDialog(l[0].takeIf { l[2] == "rename" }, l[1]) },
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RulesContent(state: RulesUiState, callbacks: RulesCallbacks) {
-    var nameDialog by remember { mutableStateOf<NameDialog?>(null) }
+    var nameDialog by rememberSaveable(stateSaver = NameDialogSaver) { mutableStateOf<NameDialog?>(null) }
     // The shell's Scaffold already consumed the status-bar inset; zero both so the bar is not padded twice.
     Scaffold(
         contentWindowInsets = WindowInsets(0),
@@ -129,9 +142,18 @@ fun RulesContent(state: RulesUiState, callbacks: RulesCallbacks) {
         if (state.loading) {
             Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    CircularProgressIndicator()
-                    // Normally a blink; if seeding the presets failed this is where the cause shows.
-                    state.error?.let { ErrorLine(it, callbacks.onDismissError) }
+                    // Normally a blink while the preset groups are created. If that failed, say why and offer the retry.
+                    val error = state.error
+                    if (error == null) {
+                        CircularProgressIndicator()
+                    } else {
+                        Text(
+                            stringResource(R.string.rules_error, error),
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(horizontal = 24.dp),
+                        )
+                        Button(onClick = callbacks.onRetrySeed) { Text(stringResource(R.string.rules_retry)) }
+                    }
                 }
             }
             return@Scaffold
@@ -285,7 +307,10 @@ private fun GroupCard(
             } else {
                 HorizontalDivider(modifier = Modifier.padding(top = 4.dp))
                 group.apps.forEach { app ->
-                    AppRow(app = app, currentCategory = id, categories = categories, callbacks = callbacks)
+                    // Keyed: each row remembers whether its menu is open, and rows move when an app changes group.
+                    key(app.packageName) {
+                        AppRow(app = app, currentCategory = id, categories = categories, callbacks = callbacks)
+                    }
                 }
             }
         }
@@ -321,17 +346,19 @@ private fun CategoryMenu(onRename: () -> Unit, onDelete: () -> Unit) {
 @Composable
 private fun AppRow(app: HeldApp, currentCategory: String?, categories: List<CategoryGroup>, callbacks: RulesCallbacks) {
     var open by remember { mutableStateOf(false) }
+    // One click target per row (the whole row); the trailing icon is only the visual hint for the menu.
     Row(
-        modifier = Modifier.fillMaxWidth().clickable { open = true }.padding(start = 16.dp, end = 4.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClickLabel = stringResource(R.string.rules_app_options, app.label), role = Role.Button) { open = true }
+            .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AppIcon(packageName = app.packageName, size = 32.dp)
         Spacer(Modifier.width(16.dp))
         Text(app.label, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         Box {
-            IconButton(onClick = { open = true }) {
-                Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.rules_app_menu, app.label))
-            }
+            Icon(Icons.Filled.MoreVert, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
                 categories.filter { it.id != currentCategory }.forEach { target ->
                     DropdownMenuItem(
@@ -413,13 +440,16 @@ fun ThrottleChip(minutes: Int?, inheritLabel: String, onPick: (Int?) -> Unit) {
 
 /** The option rows themselves, shared by [ThrottleChip] and History's "Throttle this chat" dialog. */
 @Composable
-fun ThrottleOptions(selected: Int?, inheritLabel: String, onPick: (Int?) -> Unit) {
-    val options: List<Int?> = listOf<Int?>(null, INSTANT) + THROTTLE_CHOICES + listOfNotNull(selected?.takeIf { it > INSTANT && it !in THROTTLE_CHOICES })
+fun ThrottleOptions(selected: Int?, inheritLabel: String, offerInstant: Boolean = true, onPick: (Int?) -> Unit) {
+    val options: List<Int?> = listOf<Int?>(null) + listOfNotNull(INSTANT.takeIf { offerInstant }) + THROTTLE_CHOICES +
+        listOfNotNull(selected?.takeIf { it > INSTANT && it !in THROTTLE_CHOICES })
     options.forEach { option ->
         DropdownMenuItem(
             text = { Text(if (option == null) inheritLabel else throttleLabel(option)) },
             trailingIcon = { if (option == selected) Icon(Icons.Filled.Check, contentDescription = null) },
             onClick = { onPick(option) },
+            // The check mark alone says nothing to a screen reader.
+            modifier = Modifier.semantics { this.selected = option == selected },
         )
     }
 }

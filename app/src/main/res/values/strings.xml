@@ -70,7 +70,7 @@
     <string name="focus_toggle_on_summary">Chosen apps are held and delivered as digests.</string>
     <string name="focus_toggle_off_summary">All notifications show normally.</string>
     <string name="focus_next_digest">Next digest at %1$s · %2$d held</string>
-        <string name="focus_deliver_now">Deliver now</string>
+    <string name="focus_deliver_now">Deliver now</string>
     <string name="focus_delivering">Delivering…</string>
     <string name="focus_delivered">Delivered %1$d</string>
     <string name="focus_deliver_failed">Delivery failed: %1$s</string>
@@ -94,7 +94,7 @@
     <string name="focus_checklist_listener_hint">If the toggle is greyed out: tap it once, then App info → ⋮ → Allow restricted settings</string>
     <string name="focus_checklist_post">Notification permission</string>
     <string name="focus_checklist_battery">Battery optimisation exemption</string>
-    <string name="focus_checklist_hold_list">At least one app on the hold list</string>
+    <string name="focus_checklist_hold_list">At least one app to hold</string>
     <string name="focus_checklist_done">Done</string>
     <string name="focus_checklist_todo">To do</string>
     <string name="focus_listener_connected">Listener connected %1$s</string>
@@ -131,13 +131,14 @@
     <string name="rules_category_name">Group name</string>
     <string name="rules_save">Save</string>
     <string name="rules_cancel">Cancel</string>
-    <string name="rules_app_menu">Options for %1$s</string>
     <string name="rules_move_to">Move to %1$s</string>
     <string name="rules_move_to_none">Move out of this group</string>
     <string name="rules_stop_holding">Stop holding this app</string>
     <string name="rules_chats_title">Chat rules</string>
     <string name="rules_chats_hint">One chat can have its own interval, or never be held. Add one from History: unfold a notification and choose \"Throttle this chat\".</string>
     <string name="rules_same_as_app">Same as app (%1$s)</string>
+    <string name="rules_retry">Retry</string>
+    <string name="rules_app_options">Move or stop holding %1$s</string>
     <string name="rules_error">Couldn\'t apply that change: %1$s</string>
 
     <!-- History screen -->

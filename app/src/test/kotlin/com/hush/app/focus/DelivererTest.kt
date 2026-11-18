@@ -214,6 +214,18 @@ class DelivererTest {
     }
 
     @Test
+    fun withFocusOffEveryHeldRowGoesOutOnTheFirstRunThatCanPost() = runTest {
+        // A flush that was blocked earlier left rows on different intervals behind; Focus is off now.
+        settings.update { fastAlpha().withChatRule(ChatRule("com.example.alpha", "c1", "Group one", 240)).copy(focusEnabled = false) }
+        repo.insert(event("slow", packageName = "com.example.alpha", postTime = now - 1_000L, held = true, conversationId = "c1"))
+        repo.insert(event("b1", packageName = "com.example.beta", postTime = now - 1_000L, held = true))
+
+        assertEquals(DeliverResult(2), deliverer.deliverDue(), "nothing is throttled any more, so nothing waits for its old boundary")
+        assertEquals(0, repo.selectHeldUndelivered().size)
+        assertEquals(0, alarms.size)
+    }
+
+    @Test
     fun aDigestThatReplacesAnUnreadOneStillCoversItsRows() = runTest {
         settings.update { fastAlpha() }
         seedPreviousSlot() // 3 alpha + 1 beta from 21:xx, all due at 22:13:20
@@ -228,6 +240,11 @@ class DelivererTest {
         assertEquals("Alpha 4 · Beta 1", digest.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
         assertEquals(now, shadowOf(digest.contentIntent).savedIntent.getLongExtra(MainActivity.EXTRA_DELIVERED_AT, -1), "links back to the first unread batch")
         assertEquals(5, repo.selectHeldBatch(now).size)
+        assertEquals(
+            "Alpha: T9",
+            digest.extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString().lineSequence().first(),
+            "the new row leads the expanded text; the carried ones follow",
+        )
 
         // The owner dismisses it; the next digest stands alone again.
         nm.cancel(Deliverer.DIGEST_NOTIFICATION_ID)

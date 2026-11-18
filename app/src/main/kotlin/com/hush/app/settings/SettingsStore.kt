@@ -13,7 +13,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import com.hush.app.focus.FocusRules
 import kotlinx.coroutines.flow.map
-import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 
 interface SettingsStore {
@@ -48,7 +47,14 @@ class DataStoreSettingsStore(private val dataStore: DataStore<Preferences>) : Se
     override suspend fun current(): Settings = settings.first()
 
     override suspend fun update(block: (Settings) -> Settings) {
-        dataStore.edit { prefs -> prefs.write(block(prefs.toSettings())) }
+        dataStore.edit { prefs ->
+            val before = prefs.toSettings()
+            val after = block(before)
+            // The rules blob is rewritten only by a rules edit. Every other write (listener and sync stamps
+            // land here all day) leaves it alone, so a blob this build could not read is not silently
+            // replaced by "no rules" and is still there for a build that can read it.
+            prefs.write(after, writeRules = after.rules != before.rules)
+        }
     }
 
     private object Keys {
@@ -73,10 +79,7 @@ class DataStoreSettingsStore(private val dataStore: DataStore<Preferences>) : Se
         raw ?: return FocusRules()
         return try {
             json.decodeFromString(FocusRules.serializer(), raw)
-        } catch (e: SerializationException) {
-            Log.w(TAG, "focus rules unreadable, falling back to none: ${e.javaClass.simpleName}")
-            FocusRules()
-        } catch (e: IllegalArgumentException) {
+        } catch (e: IllegalArgumentException) { // SerializationException is one
             Log.w(TAG, "focus rules unreadable, falling back to none: ${e.javaClass.simpleName}")
             FocusRules()
         }
@@ -102,7 +105,7 @@ class DataStoreSettingsStore(private val dataStore: DataStore<Preferences>) : Se
         )
     }
 
-    private fun androidx.datastore.preferences.core.MutablePreferences.write(s: Settings) {
+    private fun androidx.datastore.preferences.core.MutablePreferences.write(s: Settings, writeRules: Boolean) {
         this[Keys.serverUrl] = s.serverUrl
         this[Keys.token] = s.token
         this[Keys.focusEnabled] = s.focusEnabled
@@ -116,7 +119,7 @@ class DataStoreSettingsStore(private val dataStore: DataStore<Preferences>) : Se
         setOrRemove(Keys.lastSyncError, s.lastSyncError)
         setOrRemove(Keys.lastFocusError, s.lastFocusError)
         this[Keys.setupDone] = s.setupDone
-        this[Keys.rules] = json.encodeToString(FocusRules.serializer(), s.rules)
+        if (writeRules) this[Keys.rules] = json.encodeToString(FocusRules.serializer(), s.rules)
     }
 
     private fun <T> androidx.datastore.preferences.core.MutablePreferences.setOrRemove(key: Preferences.Key<T>, value: T?) {

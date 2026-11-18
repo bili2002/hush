@@ -76,12 +76,21 @@ class DataStoreSettingsStoreTest {
     }
 
     @Test
-    fun `an unreadable rules blob reads as no rules and is replaced by the next write`() = runTest(scope.testScheduler) {
+    fun `an unreadable rules blob reads as no rules, survives unrelated writes, and is replaced only by a rules edit`() = runTest(scope.testScheduler) {
+        val key = stringPreferencesKey("focus_rules")
         val dataStore = PreferenceDataStoreFactory.create(scope = scope) { File(tmp.root, "settings.preferences_pb") }
-        dataStore.edit { it[stringPreferencesKey("focus_rules")] = "{not json" }
         val store = DataStoreSettingsStore(dataStore)
 
-        assertEquals(FocusRules(), store.current().rules)
+        // Not JSON at all, and JSON of the wrong shape (e.g. written by a newer build).
+        for (blob in listOf("{not json", """{"categories":5}""")) {
+            dataStore.edit { it[key] = blob }
+            assertEquals(FocusRules(), store.current().rules)
+
+            // The listener and sync stamps write settings all day; they must not turn the blob into "no rules".
+            store.update { it.copy(listenerConnectedAt = 1L, slotMinutes = 30) }
+            assertEquals(blob, dataStore.data.first()[key])
+            assertEquals(30, store.current().slotMinutes)
+        }
 
         store.update { it.copy(rules = FocusRules(seeded = true)) }
         assertEquals(FocusRules(seeded = true), store.current().rules)

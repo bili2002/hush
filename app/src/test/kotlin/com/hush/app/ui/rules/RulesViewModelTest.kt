@@ -134,6 +134,44 @@ class RulesViewModelTest {
     }
 
     @Test
+    fun `every edit goes through FocusActions, which is what re-arms the alarm and releases rows`() = runTest {
+        val settings = FakeSettingsStore(seeded)
+        val actions = FakeFocusActions(settings)
+        val vm = vm(settings, actions)
+        val rule = vm.loaded().chatRules.single().rule
+
+        vm.setDefaultMinutes(30)
+        vm.setCategoryMinutes("fast", 30)
+        vm.addCategory("Later")
+        vm.renameCategory("fast", "Quick")
+        vm.moveApp(beta, "fast")
+        vm.stopHolding(beta)
+        vm.setChatRuleMinutes(rule, 15)
+        vm.removeChatRule(rule)
+        vm.deleteCategory("fast")
+
+        assertEquals(9, actions.rulesUpdates)
+    }
+
+    @Test
+    fun `a failed first visit shows its cause and Retry seeds the presets`() = runTest {
+        val settings = FakeSettingsStore(Settings(holdPackages = setOf(alpha)))
+        val actions = FakeFocusActions(settings, rulesError = IllegalStateException("disk full"))
+        val vm = vm(settings, actions)
+
+        val failed = vm.state.first { it.error != null }
+        assertTrue(failed.loading, "nothing to show yet")
+        assertEquals("disk full", failed.error)
+
+        actions.rulesError = null
+        vm.seed()
+
+        val s = vm.loaded()
+        assertNull(s.error)
+        assertEquals(Presets.categories.map { it.id } + listOf(null), s.groups.map { it.id })
+    }
+
+    @Test
     fun `chat rules can be changed and removed, and the default interval goes through FocusActions`() = runTest {
         val settings = FakeSettingsStore(seeded)
         val vm = vm(settings)

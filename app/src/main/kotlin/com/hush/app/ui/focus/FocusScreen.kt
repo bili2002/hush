@@ -240,7 +240,7 @@ private fun GateCard(reasons: List<GateReason>, callbacks: FocusCallbacks) {
                 val (label, action) = when (reason) {
                     GateReason.NO_LISTENER_ACCESS -> R.string.focus_gate_listener to callbacks.onOpenListenerSettings
                     GateReason.NO_POST_PERMISSION -> R.string.focus_gate_post to callbacks.onRequestPostPermission
-                    GateReason.EMPTY_HOLD_LIST -> R.string.focus_gate_hold_list to callbacks.onEditHoldList
+                    GateReason.NOTHING_HELD -> R.string.focus_gate_hold_list to callbacks.onEditHoldList
                 }
                 Row(
                     modifier = Modifier
@@ -274,11 +274,16 @@ private fun ErrorCard(title: String, message: String) {
 /** Who is held and how often, at a glance; the whole card opens "Apps & throttles". */
 @Composable
 private fun RulesSummaryCard(groups: List<CategoryGroup>, chatRuleCount: Int, onManage: () -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onManage)) {
-        Column(modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    // One click target: the card. The label on the right is text, not a second button doing the same thing.
+    Card(onClick = onManage, modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.focus_rules_title), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                TextButton(onClick = onManage) { Text(stringResource(R.string.focus_rules_manage)) }
+                Text(
+                    stringResource(R.string.focus_rules_manage),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                )
             }
             if (groups.isEmpty()) {
                 Text(
@@ -349,7 +354,7 @@ private fun ChecklistCard(checklist: Checklist, callbacks: FocusCallbacks) {
                 onClick = callbacks.onOpenBatterySettings,
             )
             ChecklistRow(
-                done = checklist.holdListNonEmpty,
+                done = checklist.holdsSomething,
                 label = stringResource(R.string.focus_checklist_hold_list),
                 onClick = callbacks.onEditHoldList,
             )

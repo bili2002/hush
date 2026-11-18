@@ -37,15 +37,16 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** Why the Focus toggle is disabled. Each maps to one tappable row that fixes it. */
-enum class GateReason { NO_LISTENER_ACCESS, NO_POST_PERMISSION, EMPTY_HOLD_LIST }
+enum class GateReason { NO_LISTENER_ACCESS, NO_POST_PERMISSION, NOTHING_HELD }
 
 data class Checklist(
     val listenerAccess: Boolean,
     val postPermission: Boolean,
     val batteryExempt: Boolean,
-    val holdListNonEmpty: Boolean,
+    /** The rules would hold something: a held app with an interval, or a holding chat rule. */
+    val holdsSomething: Boolean,
 ) {
-    val allDone: Boolean get() = listenerAccess && postPermission && batteryExempt && holdListNonEmpty
+    val allDone: Boolean get() = listenerAccess && postPermission && batteryExempt && holdsSomething
 }
 
 sealed interface ListenerHealth {
@@ -57,7 +58,6 @@ sealed interface ListenerHealth {
 data class FocusUiState(
     val loading: Boolean = true,
     val enabled: Boolean = false,
-    val slotMinutes: Int = 60,
     val heldCount: Long = 0,
     /** Epoch millis of the next digest; the screen formats it in the device zone. */
     val nextSlotAt: Long? = null,
@@ -139,14 +139,14 @@ class FocusViewModel(
         listenerAccess = sys.listenerEnabled,
         postPermission = sys.postNotificationsGranted,
         batteryExempt = sys.batteryExempt,
-        holdListNonEmpty = s.holdsAnything,
+        holdsSomething = s.holdsAnything,
     )
 
     private fun build(s: Settings, held: List<NotificationEvent>, sys: SystemSnapshot, now: Long, loc: Local): FocusUiState {
         val gate = buildList {
             if (!sys.listenerEnabled) add(GateReason.NO_LISTENER_ACCESS)
             if (!sys.postNotificationsGranted) add(GateReason.NO_POST_PERMISSION)
-            if (!s.holdsAnything) add(GateReason.EMPTY_HOLD_LIST)
+            if (!s.holdsAnything) add(GateReason.NOTHING_HELD)
         }
         val checklist = checklistOf(s, sys)
         val connectedAt = s.listenerConnectedAt
@@ -159,7 +159,6 @@ class FocusViewModel(
         return FocusUiState(
             loading = false,
             enabled = s.focusEnabled,
-            slotMinutes = s.slotMinutes,
             heldCount = held.size.toLong(),
             nextSlotAt = nextDigestAt(s, held, now),
             groups = s.categoryGroups(labels::label).filter { it.apps.isNotEmpty() },
@@ -212,9 +211,14 @@ class FocusViewModel(
         local.update { it.copy(deliverResult = null) }
     }
 
-    /** The quickest fix for "nothing to hold": straight to the app picker. */
+    /**
+     * The fix for "nothing would be held". With an empty hold list that is the app picker; otherwise
+     * apps are held but their groups are all on "Instantly", which is fixed on the rules screen.
+     */
     fun editHoldList() {
-        signals.requestNavigation(Routes.appPicker("hold"))
+        viewModelScope.launch {
+            signals.requestNavigation(if (settings.current().holdPackages.isEmpty()) Routes.appPicker("hold") else Routes.FOCUS_RULES)
+        }
     }
 
     fun manageRules() {

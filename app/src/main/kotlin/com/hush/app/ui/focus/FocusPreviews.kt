@@ -18,8 +18,8 @@ private fun FocusFirstRunPreview() {
             state = FocusUiState(
                 loading = false,
                 enabled = false,
-                gateReasons = listOf(GateReason.NO_LISTENER_ACCESS, GateReason.EMPTY_HOLD_LIST),
-                checklist = Checklist(listenerAccess = false, postPermission = true, batteryExempt = false, holdListNonEmpty = false),
+                gateReasons = listOf(GateReason.NO_LISTENER_ACCESS, GateReason.NOTHING_HELD),
+                checklist = Checklist(listenerAccess = false, postPermission = true, batteryExempt = false, holdsSomething = false),
                 listener = ListenerHealth.Disconnected,
             ),
             zone = zone,
@@ -36,7 +36,6 @@ private fun FocusOnPreview() {
             state = FocusUiState(
                 loading = false,
                 enabled = true,
-                slotMinutes = 60,
                 heldCount = 7,
                 nextSlotAt = 14 * 3_600_000L,
                 groups = listOf(

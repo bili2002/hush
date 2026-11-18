@@ -67,7 +67,10 @@ class Deliverer @Inject constructor(
             if (rows.isEmpty()) return@withLock DeliverResult(0)
             stillHeld = true
             val zone = ZoneId.systemDefault()
-            val due = if (force) rows else rows.filter { isDue(it.postTime, now, current.throttleMinutes(it.packageName, it.chatKey), zone) }
+            // With Focus off nothing is being throttled any more: whatever is still held (a flush that was
+            // blocked earlier) goes out on the first run that can post, not on each row's old interval.
+            val due = if (force || !current.focusEnabled) rows
+            else rows.filter { isDue(it.postTime, now, current.throttleMinutes(it.packageName, it.chatKey), zone) }
             if (due.isEmpty()) return@withLock DeliverResult(0)
 
             ensureChannel()
@@ -78,12 +81,12 @@ class Deliverer @Inject constructor(
             }
 
             val since = unreadDigestSince()?.takeIf { it < now } ?: now
-            val shown = if (since < now) repo.selectHeldBatch(since) + due else due
+            val carried = if (since < now) repo.selectHeldBatch(since) else emptyList()
 
             // Once the digest is on screen the rows must be stamped delivered, even if the caller
             // (receiver, worker, UI scope) is cancelled mid-way; otherwise the next run re-posts them.
             withContext(NonCancellable) {
-                notificationManager.notify(DIGEST_NOTIFICATION_ID, buildDigest(shown, coversSince = since))
+                notificationManager.notify(DIGEST_NOTIFICATION_ID, buildDigest(fresh = due, carried = carried, coversSince = since))
                 repo.markDelivered(due.map { it.id }, now)
                 if (current.lastFocusError != null) settings.update { it.copy(lastFocusError = null) }
             }
@@ -124,8 +127,13 @@ class Deliverer @Inject constructor(
         nm.createNotificationChannel(channel)
     }
 
-    /** [coversSince] = the delivery time of the oldest batch this digest covers; History shows every held row delivered from then on. */
-    private fun buildDigest(rows: List<NotificationEvent>, coversSince: Long): Notification {
+    /**
+     * [fresh] are the rows delivered by this run, [carried] those of the unread digest it replaces.
+     * [coversSince] = the delivery time of the oldest batch covered; History shows every held row
+     * delivered from then on.
+     */
+    private fun buildDigest(fresh: List<NotificationEvent>, carried: List<NotificationEvent>, coversSince: Long): Notification {
+        val rows = carried + fresh
         val count = rows.size
         val title = ctx.resources.getQuantityString(R.plurals.focus_digest_title, count, count)
 
@@ -136,7 +144,8 @@ class Deliverer @Inject constructor(
         val oldest = rows.minOf { it.postTime }
         // Device 12/24-hour preference and zone, same as the status bar clock.
         val since = ctx.getString(R.string.focus_digest_since, DateFormat.getTimeFormat(ctx).format(Date(oldest)))
-        val lines = rows.sortedBy { it.postTime }.take(MAX_BIG_TEXT_LINES).map { it.line() } + since
+        // New rows first: with a long carried list the expanded text would otherwise repeat the previous digest.
+        val lines = (fresh.sortedBy { it.postTime } + carried.sortedBy { it.postTime }).take(MAX_BIG_TEXT_LINES).map { it.line() } + since
 
         val open = Intent(ctx, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

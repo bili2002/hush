@@ -8,6 +8,6 @@
     </plurals>
     <string name="focus_digest_since">since %1$s</string>
     <string name="focus_digest_no_text">(no text)</string>
-    <string name="focus_error_no_hold_apps">Add at least one app to hold</string>
+    <string name="focus_error_no_hold_apps">Nothing would be held — add an app, or give its group an interval</string>
     <string name="focus_error_notifications_denied">Notifications permission denied — digests can\'t be shown</string>
 </resources>

@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hush.app.db.AppSummary
 import com.hush.app.db.NotificationRepository
+import com.hush.app.focus.FocusActions
 import com.hush.app.focus.suggestedCategory
 import com.hush.app.focus.withHeldApp
 import com.hush.app.focus.withoutHeldApp
@@ -45,6 +46,8 @@ data class AppPickerUiState(
     val apps: List<AppRow> = emptyList(),
     val selectedCount: Int = 0,
     val loadError: String? = null,
+    /** The real cause of a hold-list change that could not be saved or applied, until the next change. */
+    val saveError: String? = null,
 )
 
 /**
@@ -70,6 +73,7 @@ class AppPickerViewModel @Inject constructor(
     repository: NotificationRepository,
     private val settingsStore: SettingsStore,
     private val categories: AppCategoryResolver,
+    private val focusActions: FocusActions,
 ) : ViewModel() {
 
     val list: PickerList = PickerList.from(savedStateHandle[Routes.ARG_LIST])
@@ -77,9 +81,10 @@ class AppPickerViewModel @Inject constructor(
     private val query = MutableStateFlow("")
     private val installed = MutableStateFlow<List<InstalledApp>?>(null)
     private val loadError = MutableStateFlow<String?>(null)
+    private val saveError = MutableStateFlow<String?>(null)
 
     val state: StateFlow<AppPickerUiState> =
-        combine(installed, repository.selectApps(), settingsStore.settings, query, loadError) { inst, seen, settings, q, err ->
+        combine(installed, repository.selectApps(), settingsStore.settings, query, combine(loadError, saveError, ::Pair)) { inst, seen, settings, q, (err, saveErr) ->
             val selected = list.selectedIn(settings)
             AppPickerUiState(
                 list = list,
@@ -88,6 +93,7 @@ class AppPickerViewModel @Inject constructor(
                 apps = orderApps(inst.orEmpty(), seen, selected, q),
                 selectedCount = selected.size,
                 loadError = err,
+                saveError = saveErr,
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppPickerUiState(list = list))
 
@@ -112,16 +118,27 @@ class AppPickerViewModel @Inject constructor(
     /** Persists immediately; the row order follows from the store update. */
     fun setChecked(packageName: String, checked: Boolean) {
         viewModelScope.launch {
-            // Looked up outside the store's transform: a PackageManager call has no business inside a DataStore edit.
-            val osCategory = if (list == PickerList.HOLD && checked) categories.osCategory(packageName) else null
-            settingsStore.update { s ->
+            try {
                 when (list) {
-                    // A newly held app lands in the preset it most likely belongs to; un-holding forgets its category.
-                    PickerList.HOLD ->
-                        if (checked) s.withHeldApp(packageName, s.suggestedCategory(packageName, osCategory)) else s.withoutHeldApp(packageName)
-                    PickerList.EXCLUDED ->
+                    // The hold list is a Focus rule: through FocusActions, so that while Focus is on the alarm is
+                    // re-armed for the app's interval and an un-held app's rows are released, same as on the rules
+                    // screen. A newly held app lands in the preset it most likely belongs to.
+                    PickerList.HOLD -> {
+                        // Looked up outside the settings transform: a PackageManager call has no business inside it.
+                        val osCategory = if (checked) categories.osCategory(packageName) else null
+                        focusActions.updateRules { s ->
+                            if (checked) s.withHeldApp(packageName, s.suggestedCategory(packageName, osCategory)) else s.withoutHeldApp(packageName)
+                        }
+                    }
+                    PickerList.EXCLUDED -> settingsStore.update { s ->
                         s.copy(excludedPackages = if (checked) s.excludedPackages + packageName else s.excludedPackages - packageName)
+                    }
                 }
+                saveError.value = null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                saveError.value = e.message ?: e::class.simpleName
             }
         }
     }

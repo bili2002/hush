@@ -279,12 +279,15 @@ class HistoryViewModel(
         return ChatThrottle(
             packageName = event.packageName,
             chatKey = key,
-            title = event.conversationTitle?.takeIf { it.isNotBlank() } ?: event.title?.takeIf { it.isNotBlank() } ?: key,
+            title = chatTitle(event, key),
             appLabel = event.appLabel?.takeIf { it.isNotBlank() } ?: event.packageName,
             ruleMinutes = s.chatRule(event.packageName, key)?.minutes,
             appMinutes = s.appThrottleMinutes(event.packageName),
         )
     }
+
+    private fun chatTitle(event: NotificationEvent, key: String): String =
+        event.conversationTitle?.takeIf { it.isNotBlank() } ?: event.title?.takeIf { it.isNotBlank() } ?: key
 
     /** "Throttle this chat" on a row: opens the dialog for the row's chat. */
     fun askChatThrottle(event: NotificationEvent) {
@@ -297,13 +300,15 @@ class HistoryViewModel(
 
     /** Applies the dialog's choice: an interval, [com.hush.app.focus.INSTANT] (never held), or null = no rule, follow the app. */
     fun setChatThrottle(minutes: Int?) {
-        val dialog = state.value.chatThrottle ?: return
+        // The subject comes from the dialog's own source, not from `state`, which lags it and is empty without a collector.
+        val event = local.value.throttleFor ?: return
+        val key = event.chatKey ?: return
         local.update { it.copy(throttleFor = null) }
         viewModelScope.launch {
             try {
                 focusActions.updateRules { s ->
-                    if (minutes == null) s.withoutChatRule(dialog.packageName, dialog.chatKey)
-                    else s.withChatRule(ChatRule(dialog.packageName, dialog.chatKey, dialog.title, minutes))
+                    if (minutes == null) s.withoutChatRule(event.packageName, key)
+                    else s.withChatRule(ChatRule(event.packageName, key, chatTitle(event, key), minutes))
                 }
                 local.update { it.copy(ruleError = null) }
             } catch (e: CancellationException) {

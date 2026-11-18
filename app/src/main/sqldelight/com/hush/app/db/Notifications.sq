@@ -118,9 +118,6 @@ WHERE post_time < :ts
 changes:
 SELECT changes();
 
-countHeld:
-SELECT COUNT(*) FROM notification_event WHERE held = 1 AND delivered_at IS NULL;
-
 countUnsynced:
 SELECT COUNT(*) FROM notification_event WHERE synced_at IS NULL;
 

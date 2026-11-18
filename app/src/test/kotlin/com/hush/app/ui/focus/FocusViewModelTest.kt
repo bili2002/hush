@@ -78,10 +78,12 @@ class FocusViewModelTest {
         assertEquals(at("2024-01-10T14:00:00Z"), vm.loaded().nextSlotAt)
 
         settings.update { it.copy(slotMinutes = 15) }
-        assertEquals(at("2024-01-10T13:30:00Z"), vm.state.first { it.slotMinutes == 15 }.nextSlotAt)
+        val quarter = at("2024-01-10T13:30:00Z")
+        assertEquals(quarter, vm.state.first { it.nextSlotAt == quarter }.nextSlotAt)
 
         settings.update { it.copy(slotMinutes = 120) }
-        assertEquals(at("2024-01-10T14:00:00Z"), vm.state.first { it.slotMinutes == 120 }.nextSlotAt)
+        val evenHour = at("2024-01-10T14:00:00Z")
+        assertEquals(evenHour, vm.state.first { it.nextSlotAt == evenHour }.nextSlotAt)
     }
 
     @Test
@@ -145,7 +147,7 @@ class FocusViewModelTest {
     @Test
     fun `empty hold list gates the toggle`() = runTest {
         val s = vm(FakeSettingsStore(Settings())).loaded()
-        assertEquals(listOf(GateReason.EMPTY_HOLD_LIST), s.gateReasons)
+        assertEquals(listOf(GateReason.NOTHING_HELD), s.gateReasons)
         assertFalse(s.canToggle)
     }
 
@@ -171,7 +173,7 @@ class FocusViewModelTest {
 
         assertNotNull(checklist)
         assertEquals(
-            Checklist(listenerAccess = true, postPermission = false, batteryExempt = false, holdListNonEmpty = false),
+            Checklist(listenerAccess = true, postPermission = false, batteryExempt = false, holdsSomething = false),
             checklist,
         )
         assertFalse(checklist.allDone)
@@ -194,7 +196,7 @@ class FocusViewModelTest {
         val s = vm(FakeSettingsStore(Settings(setupDone = true))).loaded()
 
         assertNull(s.checklist)
-        assertEquals(listOf(GateReason.NO_LISTENER_ACCESS, GateReason.EMPTY_HOLD_LIST), s.gateReasons)
+        assertEquals(listOf(GateReason.NO_LISTENER_ACCESS, GateReason.NOTHING_HELD), s.gateReasons)
     }
 
     @Test
@@ -255,7 +257,6 @@ class FocusViewModelTest {
         val settings = FakeSettingsStore(
             Settings(
                 focusEnabled = true,
-                slotMinutes = 60,
                 holdPackages = setOf("com.example.alpha", "com.example.beta"),
                 rules = FocusRules(categories = listOf(FocusCategory("fast", "Fast", 15)), appCategory = mapOf("com.example.alpha" to "fast")),
             ),
@@ -279,7 +280,7 @@ class FocusViewModelTest {
             holdPackages = setOf("com.example.alpha"),
             rules = FocusRules(categories = listOf(FocusCategory("off", "Off", INSTANT)), appCategory = mapOf("com.example.alpha" to "off")),
         )
-        assertEquals(listOf(GateReason.EMPTY_HOLD_LIST), vm(FakeSettingsStore(instantOnly)).loaded().gateReasons)
+        assertEquals(listOf(GateReason.NOTHING_HELD), vm(FakeSettingsStore(instantOnly)).loaded().gateReasons)
 
         val chatOnly = Settings(rules = FocusRules(chatRules = listOf(ChatRule("com.example.alpha", "c1", "Group one", 60))))
         assertTrue(vm(FakeSettingsStore(chatOnly)).loaded().gateReasons.isEmpty(), "a holding chat rule is enough")
@@ -306,8 +307,7 @@ class FocusViewModelTest {
         val s = vm(
             FakeSettingsStore(
                 Settings(
-                    slotMinutes = 60,
-                    holdPackages = setOf("com.example.beta", "com.example.alpha", "com.example.gamma"),
+                        holdPackages = setOf("com.example.beta", "com.example.alpha", "com.example.gamma"),
                     lastFocusError = "boom",
                     rules = FocusRules(
                         categories = listOf(FocusCategory("fast", "Fast", 15), FocusCategory("empty", "Empty", 30)),
@@ -347,10 +347,14 @@ class FocusViewModelTest {
         var route: String? = null
         val job = launch(start = CoroutineStart.UNDISPATCHED) { signals.navigate.collect { route = it } }
 
+        // Nothing on the hold list yet: the picker. Apps held but all on "Instantly": the rules screen.
+        vm(FakeSettingsStore(Settings())).editHoldList()
+        runCurrent()
+        assertEquals("apps/hold", route)
+
         vm().editHoldList()
         runCurrent()
-
-        assertEquals("apps/hold", route)
+        assertEquals("focus/rules", route)
         job.cancel()
     }
 }

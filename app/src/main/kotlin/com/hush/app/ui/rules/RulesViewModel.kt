@@ -80,8 +80,14 @@ class RulesViewModel(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RulesUiState())
 
     init {
-        // First visit: create the presets and sort the already-held apps into them. The OS category
-        // lookups happen here, outside the settings transform.
+        seed()
+    }
+
+    /**
+     * First visit: create the presets and sort the already-held apps into them. The OS category
+     * lookups happen here, outside the settings transform. Also the "Retry" of a failed first visit.
+     */
+    fun seed() {
         edit {
             val current = settings.current()
             if (!current.rules.seeded) {

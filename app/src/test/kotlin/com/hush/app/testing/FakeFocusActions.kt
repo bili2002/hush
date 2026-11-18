@@ -16,12 +16,17 @@ class FakeFocusActions(
     var deliverCalls = 0
         private set
 
+    /** How many rule edits came through [updateRules] (and were not written to the store behind its back). */
+    var rulesUpdates = 0
+        private set
+
     override suspend fun setEnabled(enabled: Boolean) = settings.update { it.copy(focusEnabled = enabled) }
 
     override suspend fun setSlotMinutes(minutes: Int) = updateRules { it.copy(slotMinutes = minutes) }
 
     override suspend fun updateRules(edit: (Settings) -> Settings) {
         rulesError?.let { throw it }
+        rulesUpdates++
         settings.update(edit)
     }
 

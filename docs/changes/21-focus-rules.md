@@ -27,6 +27,9 @@ Focus is no longer "one hold list, one interval" (#21):
   until the owner picks an interval.
 - Intervals offered: 15 min, 30 min, 1 h, 2 h, 4 h, plus "Instantly".
 
+Not done here (follow-ups): confirm/undo for "Delete group"; searching the server archive by chat
+name.
+
 Needs device test: the rules screen menus, digest cadence with two different intervals over an
 hour or two, "Throttle this chat" on real messaging apps, battery impact of a 15-minute group.
 
@@ -69,6 +72,28 @@ What: the one-shot alarm is armed at the earliest upcoming boundary over the int
 apps and holding chat rules, whether or not anything is held right now.
 Why: one owner of the alarm, no arming from the listener path. A 15-minute group costs at most
 96 inexact wake-ups a day; a group interval that no app uses costs none.
+
+**[2026-11-18] Every hold-rule write goes through `FocusActions.updateRules`**
+What: the rules screen, History's chat dialog and the app picker's hold list all call
+`updateRules`, which saves and then (Focus on) re-runs the non-forced delivery, under
+`NonCancellable`. Only the excluded list still writes settings directly.
+Why: the alarm now depends on which intervals are in use, so any write that can change that set
+must also re-arm it; otherwise a newly held 15-minute app waits for an alarm set for the old,
+longer interval. Non-cancellable because the callers are screens the owner may leave right after
+the tap.
+
+**[2026-11-18] With Focus off, a non-forced run delivers everything still held**
+What: per-row "due" applies only while Focus is on.
+Why: rows are only left held with Focus off when the flush was blocked (notifications denied).
+Once posting works again there is nothing to throttle for; they should not sit out a 4-hour
+interval.
+
+**[2026-11-18] The rules blob is written only when the rules change**
+What: `DataStoreSettingsStore.update` leaves `focus_rules` untouched unless the edit changed
+`Settings.rules`.
+Why: settings are rewritten constantly (listener and sync stamps). A blob this build cannot read
+(corrupt, or from a newer build after a downgrade) reads as "no rules" but must not be replaced
+by that reading on the next unrelated write.
 
 **[2026-11-18] Overrides the IDEAS "refused" entry for VIP / per-contact rules**
 What: per-chat throttles exist, as an interval per chat only; still no keyword filters or rules

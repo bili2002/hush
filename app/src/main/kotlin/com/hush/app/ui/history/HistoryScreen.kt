@@ -71,6 +71,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.hush.app.R
 import com.hush.app.db.NotificationEvent
+import com.hush.app.focus.INSTANT
 import com.hush.app.ui.components.AppIcon
 import com.hush.app.ui.components.dayLabel
 import com.hush.app.ui.components.formatClock
@@ -257,6 +258,8 @@ private fun ChatThrottleDialog(dialog: ChatThrottle, onPick: (Int?) -> Unit, onD
                 ThrottleOptions(
                     selected = dialog.ruleMinutes,
                     inheritLabel = stringResource(R.string.rules_same_as_app, throttleEvery(dialog.appMinutes)),
+                    // For a chat of an app that is not held, "Instantly" would be a rule that changes nothing.
+                    offerInstant = dialog.appMinutes > INSTANT || dialog.ruleMinutes == INSTANT,
                     onPick = onPick,
                 )
             }

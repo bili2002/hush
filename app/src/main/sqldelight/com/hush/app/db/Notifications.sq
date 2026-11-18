@@ -36,7 +36,7 @@ INSERT OR IGNORE INTO notification_event (
     id, key, package_name, app_label, post_time, title, text, big_text, sub_text, channel_id,
     category, flags, importance, event, removed_reason, held, delivered_at, synced_at, created_at,
     conversation_id, conversation_title
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?);
 
 selectRecent:
 SELECT * FROM notification_event

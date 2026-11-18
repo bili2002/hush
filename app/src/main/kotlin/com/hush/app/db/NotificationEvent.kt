@@ -17,7 +17,7 @@ data class NotificationEvent(
     val event: EventType,
     val removedReason: Int?,
     val held: Boolean,
-    // Stamps are set by markDelivered / markSynced, never by insert; defaults keep construction sites short.
+    // Stamps are set by markDelivered / markSynced (and by a muted insert), never taken from the caller.
     val deliveredAt: Long? = null,
     val syncedAt: Long? = null,
     /** Stable id of the conversation (shortcut id, or the MessagingStyle title); null when the notification is not one. */
@@ -31,6 +31,18 @@ data class NotificationEvent(
      * so rows captured before conversations were recorded still group by title.
      */
     val chatKey: String? get() = (conversationId ?: title)?.takeIf { it.isNotEmpty() }
+
+    /** Hidden by a "Muted" rule: it was never in a digest and never will be. */
+    val muted: Boolean get() = held && deliveredAt == MUTED_AT
+
+    companion object {
+        /**
+         * The `deliveredAt` of a muted row. A muted row is finished the moment it is recorded, so it
+         * carries a delivery stamp like any other released row (nothing treats it as still held), and
+         * this value, which no real delivery can have, tells it apart from one that was in a digest.
+         */
+        const val MUTED_AT = 0L
+    }
 }
 
 enum class EventType { POSTED, REMOVED }

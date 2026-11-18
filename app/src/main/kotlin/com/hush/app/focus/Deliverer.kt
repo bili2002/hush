@@ -199,7 +199,7 @@ class Deliverer @Inject constructor(
         /**
          * A row held for [minutes] is due once a slot boundary of that interval has passed since it
          * was posted, once it is older than [maxAgeMillis], when the rules no longer hold it
-         * ([minutes] is [INSTANT]), or when its post time is in the future (the clock was set back
+         * ([minutes] is [INSTANT], or [MUTED]: muting applies to what arrives after the choice), or when its post time is in the future (the clock was set back
          * since it was held; waiting for "its" boundary could take hours). For a fixed zone the
          * max-age clause is implied by the slot clause (maxAge ≥ 2 slots); it stays as an
          * independent guard against zone changes and `nextSlot` edge cases.

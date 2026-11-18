@@ -26,5 +26,7 @@ class DigestLinkTest {
         assertNull(DigestLink.parse(Intent(Intent.ACTION_MAIN)))
         assertNull(DigestLink.parse(Intent().putExtra(MainActivity.EXTRA_FILTER, "other").putExtra(MainActivity.EXTRA_DELIVERED_AT, 1L)))
         assertNull(DigestLink.parse(Intent().putExtra(MainActivity.EXTRA_FILTER, MainActivity.FILTER_HELD)))
+        assertNull(DigestLink.parse(Intent().putExtra(MainActivity.EXTRA_FILTER, MainActivity.FILTER_HELD).putExtra(MainActivity.EXTRA_DELIVERED_AT, 0L)))
+        assertNull(DigestLink.parse(Intent().putExtra(MainActivity.EXTRA_FILTER, MainActivity.FILTER_HELD).putExtra(MainActivity.EXTRA_DELIVERED_AT, "soon")))
     }
 }

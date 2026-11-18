@@ -56,6 +56,19 @@ class NotificationRepositoryTest {
     }
 
     @Test
+    fun `a muted insert is closed from the start - not held-undelivered, in no digest batch, purged like any row`() = runTest {
+        repo.insert(event("m", held = true, postTime = 10), muted = true)
+
+        val row = repo.selectRecent(limit = 1, before = Long.MAX_VALUE).first().single()
+        assertTrue(row.muted)
+        assertTrue(repo.selectHeldUndelivered().isEmpty())
+        assertTrue(repo.selectHeldBatch(since = 1).isEmpty())
+
+        repo.markSynced(listOf("m"), syncedAt = 20)
+        assertEquals(1, repo.deleteSyncedOlderThan(ts = 500))
+    }
+
+    @Test
     fun `markSynced and markDelivered handle more ids than SQLite's 999 variable cap`() = runTest {
         val ids = (1..1001).map { "id-$it" }
         ids.forEachIndexed { i, id -> repo.insert(event(id, postTime = i.toLong(), held = true)) }

@@ -70,7 +70,6 @@ data class FocusCallbacks(
     val onToggle: (Boolean) -> Unit = {},
     val onDeliverNow: () -> Unit = {},
     val onDismissResult: () -> Unit = {},
-    val onEditHoldList: () -> Unit = {},
     val onManageRules: () -> Unit = {},
     val onOpenListenerSettings: () -> Unit = {},
     val onRequestPostPermission: () -> Unit = {},
@@ -110,7 +109,6 @@ fun FocusScreen(vm: FocusViewModel = hiltViewModel()) {
             onToggle = vm::setEnabled,
             onDeliverNow = vm::deliverNow,
             onDismissResult = vm::dismissDeliverResult,
-            onEditHoldList = vm::editHoldList,
             onManageRules = vm::manageRules,
             onOpenListenerSettings = { open(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
             onRequestPostPermission = {
@@ -236,7 +234,7 @@ private fun GateCard(reasons: List<GateReason>, callbacks: FocusCallbacks) {
                 val (label, action) = when (reason) {
                     GateReason.NO_LISTENER_ACCESS -> R.string.focus_gate_listener to callbacks.onOpenListenerSettings
                     GateReason.NO_POST_PERMISSION -> R.string.focus_gate_post to callbacks.onRequestPostPermission
-                    GateReason.NOTHING_HELD -> R.string.focus_gate_hold_list to callbacks.onEditHoldList
+                    GateReason.NOTHING_HELD -> R.string.focus_gate_hold_list to callbacks.onManageRules
                 }
                 Row(
                     modifier = Modifier
@@ -348,7 +346,7 @@ private fun ChecklistCard(checklist: Checklist, callbacks: FocusCallbacks) {
             ChecklistRow(
                 done = checklist.holdsSomething,
                 label = stringResource(R.string.focus_checklist_hold_list),
-                onClick = callbacks.onEditHoldList,
+                onClick = callbacks.onManageRules,
             )
         }
     }

@@ -38,7 +38,7 @@ class HushApiTest {
 
     private val items = listOf(
         event("id-1", postTime = 0, title = null, text = null, appLabel = "Alpha").toDto(),
-        event("id-2", packageName = "com.example.beta", postTime = 42, event = EventType.REMOVED, bigText = "big").toDto(),
+        event("id-2", packageName = "com.example.beta", postTime = 42, event = EventType.REMOVED, bigText = "big", conversationId = "chat-7", conversationTitle = "Synthetic chat").toDto(),
     )
 
     @Test
@@ -59,10 +59,10 @@ class HushApiTest {
             {"device":"Pixel","items":[
               {"id":"id-1","key":"0|com.example.alpha|id-1|null|10000","packageName":"com.example.alpha","appLabel":"Alpha",
                "postTime":0,"title":null,"text":null,"bigText":null,"subText":null,"channelId":"default","category":null,
-               "flags":0,"importance":3,"event":"posted","removedReason":null},
+               "flags":0,"importance":3,"event":"posted","removedReason":null,"conversationId":null,"conversationTitle":null},
               {"id":"id-2","key":"0|com.example.beta|id-2|null|10000","packageName":"com.example.beta","appLabel":"Alpha",
                "postTime":42,"title":"title id-2","text":"text id-2","bigText":"big","subText":null,"channelId":"default","category":null,
-               "flags":0,"importance":3,"event":"removed","removedReason":null}
+               "flags":0,"importance":3,"event":"removed","removedReason":null,"conversationId":"chat-7","conversationTitle":"Synthetic chat"}
             ]}
             """.trimIndent(),
         )

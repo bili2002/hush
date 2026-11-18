@@ -5,6 +5,8 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
 import android.text.SpannableString
 import android.text.style.StyleSpan
+import androidx.core.app.NotificationCompat
+import androidx.core.app.Person
 import com.hush.app.db.EventType
 import com.hush.app.settings.Settings
 import kotlin.test.Test
@@ -73,6 +75,61 @@ class NotificationMapperTest {
         )
         val e = assertNotNull(mapper.map(sbn(n), null, settings))
         assertEquals("Ann: hi\n?: anonymous\nBob: earlier", e.bigText)
+    }
+
+    @Test
+    fun `a plain notification is not a conversation`() {
+        val e = assertNotNull(mapper.map(sbn(notification(title = "Headline")), null, settings))
+        assertNull(e.conversationId)
+        assertNull(e.conversationTitle)
+        assertEquals("Headline", e.chatKey, "it still groups by title")
+    }
+
+    @Test
+    fun `the shortcut id is the conversation id and the title names it`() {
+        val n = notification(title = "Synthetic group") { it.setShortcutId("chat-42") }
+        val e = assertNotNull(mapper.map(sbn(n), null, settings))
+        assertEquals("chat-42", e.conversationId)
+        assertEquals("Synthetic group", e.conversationTitle)
+        assertEquals("chat-42", e.chatKey)
+    }
+
+    @Test
+    fun `a MessagingStyle group without a shortcut is keyed by its conversation title`() {
+        val n = notification(title = null, text = null) { b ->
+            b.setStyle(
+                NotificationCompat.MessagingStyle(Person.Builder().setName("Me").build())
+                    .setConversationTitle("Synthetic group")
+                    .setGroupConversation(true)
+                    .addMessage("hi", 1_000L, Person.Builder().setName("Ann").build()),
+            )
+        }
+        val e = assertNotNull(mapper.map(sbn(n), null, settings))
+        assertEquals("Synthetic group", e.conversationId)
+        assertEquals("Synthetic group", e.conversationTitle)
+    }
+
+    @Test
+    fun `a one-to-one MessagingStyle chat without a shortcut is keyed by its title`() {
+        val e = assertNotNull(mapper.map(sbn(messagingNotification(messages = listOf("Ann" to "hi"))), null, settings))
+        assertNotNull(e.title, "the platform fills the title with the sender")
+        assertEquals(e.title, e.conversationId)
+        assertEquals(e.title, e.conversationTitle)
+    }
+
+    @Test
+    fun `the shortcut id wins over the MessagingStyle title`() {
+        val n = notification(title = null, text = null) { b ->
+            b.setShortcutId("chat-9")
+            b.setStyle(
+                NotificationCompat.MessagingStyle(Person.Builder().setName("Me").build())
+                    .setConversationTitle("Renamed group")
+                    .addMessage("hi", 1_000L, Person.Builder().setName("Ann").build()),
+            )
+        }
+        val e = assertNotNull(mapper.map(sbn(n), null, settings))
+        assertEquals("chat-9", e.conversationId)
+        assertEquals("Renamed group", e.conversationTitle)
     }
 
     @Test

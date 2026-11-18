@@ -30,6 +30,8 @@ fun event(
     text: String? = "text $id",
     bigText: String? = null,
     event: EventType = EventType.POSTED,
+    conversationId: String? = null,
+    conversationTitle: String? = null,
 ): NotificationEvent = NotificationEvent(
     id = id,
     key = "0|$packageName|$id|null|10000",
@@ -47,4 +49,6 @@ fun event(
     event = event,
     removedReason = null,
     held = held,
+    conversationId = conversationId,
+    conversationTitle = conversationTitle,
 )

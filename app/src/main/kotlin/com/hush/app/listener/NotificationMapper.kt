@@ -33,6 +33,8 @@ class NotificationMapper @Inject constructor(@ApplicationContext context: Contex
         if (NoiseFilters.reason(sbn, settings, ownPackage) != null) return null
         val n = sbn.notification
         val extras = n.extras
+        val style = messagingStyle(n)
+        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
         val textLines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
             ?.filterNotNull()
             ?.joinToString("\n") { it.toString() }
@@ -40,11 +42,19 @@ class NotificationMapper @Inject constructor(@ApplicationContext context: Contex
         val bigText = listOfNotNull(
             extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString(),
             textLines,
-            messagingLines(n),
+            style?.let(::messagingLines),
         ).joinToString("\n").ifEmpty { null }?.take(MAX_BIG_TEXT_CHARS)
 
+        // Conversation identity. The shortcut id is what messaging apps publish for the conversation
+        // (stable across renames); without one, only a MessagingStyle notification counts as a chat
+        // and its (group or sender) title stands in. Anything else is not a conversation.
+        val conversationTitle = style?.conversationTitle?.toString()?.takeIf { it.isNotBlank() } ?: title?.takeIf { it.isNotBlank() }
+        val conversationId = n.shortcutId?.takeIf { it.isNotBlank() } ?: conversationTitle.takeIf { style != null }
+
         return base(sbn, EventType.POSTED).copy(
-            title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString(),
+            title = title,
+            conversationId = conversationId,
+            conversationTitle = conversationTitle.takeIf { conversationId != null },
             text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString(),
             bigText = bigText,
             subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString(),
@@ -81,15 +91,17 @@ class NotificationMapper @Inject constructor(@ApplicationContext context: Contex
         )
     }
 
-    /** `messages + historicMessages` as "sender: text" lines, or null when the notification has no MessagingStyle. */
-    private fun messagingLines(n: Notification): String? {
-        val style = try {
-            NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(n)
-        } catch (e: RuntimeException) {
-            // Malformed extras from a third-party app must never cost us the row.
-            Log.w(TAG, "MessagingStyle extraction failed: ${e.javaClass.simpleName}")
-            null
-        } ?: return null
+    /** Null when the notification has no MessagingStyle, or its extras are malformed. */
+    private fun messagingStyle(n: Notification): NotificationCompat.MessagingStyle? = try {
+        NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(n)
+    } catch (e: RuntimeException) {
+        // Malformed extras from a third-party app must never cost us the row.
+        Log.w(TAG, "MessagingStyle extraction failed: ${e.javaClass.simpleName}")
+        null
+    }
+
+    /** `messages + historicMessages` as "sender: text" lines, or null when there are none. */
+    private fun messagingLines(style: NotificationCompat.MessagingStyle): String? {
         val lines = (style.messages + style.historicMessages).map { m ->
             val sender = m.person?.name?.toString() ?: "?"
             "$sender: ${m.text?.toString().orEmpty()}"

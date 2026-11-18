@@ -18,7 +18,11 @@ CREATE TABLE notification_event (
     held INTEGER AS kotlin.Boolean NOT NULL DEFAULT 0,
     delivered_at INTEGER,
     synced_at INTEGER,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    -- Added in schema v2 (migrations/1.sqm). Null for non-conversation notifications and for rows
+    -- captured before v2; "which chat" is therefore always COALESCE(conversation_id, title).
+    conversation_id TEXT,
+    conversation_title TEXT
 );
 
 CREATE INDEX notification_event_post_time ON notification_event(post_time);
@@ -30,8 +34,9 @@ CREATE INDEX notification_event_held_undelivered ON notification_event(post_time
 insert:
 INSERT OR IGNORE INTO notification_event (
     id, key, package_name, app_label, post_time, title, text, big_text, sub_text, channel_id,
-    category, flags, importance, event, removed_reason, held, delivered_at, synced_at, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?);
+    category, flags, importance, event, removed_reason, held, delivered_at, synced_at, created_at,
+    conversation_id, conversation_title
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?);
 
 selectRecent:
 SELECT * FROM notification_event
@@ -39,12 +44,45 @@ WHERE post_time < :before
 ORDER BY post_time DESC
 LIMIT :limit;
 
-search:
+-- The History list: POSTED rows only, newest first, every filter optional. `:q` arrives LIKE-escaped;
+-- '' means "no search". `:chat` is a chat key, i.e. COALESCE(conversation_id, title).
+selectHistory:
 SELECT * FROM notification_event
-WHERE (title LIKE '%' || :q || '%' ESCAPE '\' OR text LIKE '%' || :q || '%' ESCAPE '\' OR big_text LIKE '%' || :q || '%' ESCAPE '\')
+WHERE event = 'POSTED'
   AND (:packageName IS NULL OR package_name = :packageName)
+  AND (:chat IS NULL OR COALESCE(conversation_id, title) = :chat)
+  AND (:q = ''
+       OR title LIKE '%' || :q || '%' ESCAPE '\'
+       OR text LIKE '%' || :q || '%' ESCAPE '\'
+       OR big_text LIKE '%' || :q || '%' ESCAPE '\'
+       OR conversation_title LIKE '%' || :q || '%' ESCAPE '\')
 ORDER BY post_time DESC
 LIMIT :limit;
+
+-- Same WHERE as selectHistory; the "Show all (N)" count.
+countHistory:
+SELECT COUNT(*) FROM notification_event
+WHERE event = 'POSTED'
+  AND (:packageName IS NULL OR package_name = :packageName)
+  AND (:chat IS NULL OR COALESCE(conversation_id, title) = :chat)
+  AND (:q = ''
+       OR title LIKE '%' || :q || '%' ESCAPE '\'
+       OR text LIKE '%' || :q || '%' ESCAPE '\'
+       OR big_text LIKE '%' || :q || '%' ESCAPE '\'
+       OR conversation_title LIKE '%' || :q || '%' ESCAPE '\');
+
+-- One app's chats, most recent first. With a single MAX() SQLite takes the bare columns
+-- (conversation_title, title) from the row that holds the maximum, i.e. the newest name of the chat.
+selectChats:
+SELECT COALESCE(conversation_id, title) AS chat_key, conversation_title, title,
+       COUNT(*) AS count, MAX(post_time) AS last_seen
+FROM notification_event
+WHERE package_name = :packageName
+  AND event = 'POSTED'
+  AND COALESCE(conversation_id, title) IS NOT NULL
+  AND COALESCE(conversation_id, title) <> ''
+GROUP BY COALESCE(conversation_id, title)
+ORDER BY last_seen DESC;
 
 selectUnsynced:
 SELECT * FROM notification_event
@@ -84,8 +122,10 @@ SELECT COUNT(*) FROM notification_event WHERE held = 1 AND delivered_at IS NULL;
 countUnsynced:
 SELECT COUNT(*) FROM notification_event WHERE synced_at IS NULL;
 
+-- Apps for the History filter sheet: POSTED rows only, so the count matches what the list shows.
 selectApps:
 SELECT package_name, MAX(app_label) AS app_label, COUNT(*) AS count, MAX(post_time) AS last_seen
 FROM notification_event
+WHERE event = 'POSTED'
 GROUP BY package_name
 ORDER BY last_seen DESC;

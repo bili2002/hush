@@ -7,6 +7,7 @@ import com.hush.app.db.NotificationEvent
 import com.hush.app.settings.Settings
 import com.hush.app.testing.FakeSettingsStore
 import com.hush.app.testing.event
+import com.hush.app.testing.fixedClock
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlinx.coroutines.test.runTest
@@ -68,9 +69,28 @@ class FocusPolicyTest {
     }
 
     @Test
+    fun `the gate applies the schedule as of now, without waiting for the alarm to write it down`() = runTest {
+        // 2023-11-14 is a Tuesday; the clock says 22:13 UTC.
+        val clock = fixedClock(1_700_000_000_000L)
+        val zone = java.time.ZoneId.systemDefault()
+        val minuteOfDay = java.time.Instant.ofEpochMilli(clock.millis()).atZone(zone).let { it.hour * 60 + it.minute }
+        val today = java.time.Instant.ofEpochMilli(clock.millis()).atZone(zone).dayOfWeek.value
+        val running = ScheduleEntry("e", DEFAULT_PROFILE_ID, setOf(today), minuteOfDay, (minuteOfDay + 30) % (24 * 60))
+
+        // Stored as off, but an entry started this very minute: held.
+        val startedJustNow = FakeSettingsStore(focusOn.copy(focusEnabled = false).withScheduleEntry(running))
+        assertEquals(Decision.HOLD, HoldGate(startedJustNow, clock).decide(base))
+        assertEquals(false, startedJustNow.state.value.focusEnabled, "the gate decides, it does not write")
+
+        // Stored as on, but the schedule's only entry is on another day: not held.
+        val over = FakeSettingsStore(focusOn.withScheduleEntry(running.copy(days = setOf(today % 7 + 1), start = 0, end = 1)))
+        assertEquals(Decision.PASS_THROUGH, HoldGate(over, clock).decide(base))
+    }
+
+    @Test
     fun holdGateReadsCurrentSettings() = runTest {
         val store = FakeSettingsStore(focusOn)
-        val gate = HoldGate(store)
+        val gate = HoldGate(store, fixedClock(1_700_000_000_000L))
         assertEquals(Decision.HOLD, gate.decide(base))
         store.update { it.copy(focusEnabled = false) }
         assertEquals(Decision.PASS_THROUGH, gate.decide(base))

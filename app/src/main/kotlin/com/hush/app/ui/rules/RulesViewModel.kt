@@ -1,5 +1,6 @@
 package com.hush.app.ui.rules
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hush.app.db.NotificationRepository
@@ -8,16 +9,22 @@ import com.hush.app.focus.ChatRule
 import com.hush.app.focus.FocusActions
 import com.hush.app.focus.INSTANT
 import com.hush.app.focus.Presets
+import com.hush.app.focus.activeProfile
 import com.hush.app.focus.appThrottleMinutes
 import com.hush.app.focus.categoryGroups
 import com.hush.app.focus.chatRule
+import com.hush.app.focus.profile
+import com.hush.app.focus.profileList
 import com.hush.app.focus.seededWithPresets
+import com.hush.app.focus.viewOf
 import com.hush.app.focus.withAutoSorted
 import com.hush.app.focus.withAppInCategory
 import com.hush.app.focus.withCategoryAdded
 import com.hush.app.focus.withCategoryMinutes
 import com.hush.app.focus.withCategoryRenamed
 import com.hush.app.focus.withChatRule
+import com.hush.app.focus.withProfileDnd
+import com.hush.app.focus.withProfileEdited
 import com.hush.app.focus.withoutCategory
 import com.hush.app.focus.withoutChatRule
 import com.hush.app.focus.withoutHeldApp
@@ -61,6 +68,12 @@ data class ChatPicker(val packageName: String?, val appLabel: String?, val items
 
 data class RulesUiState(
     val loading: Boolean = true,
+    /** The profile this screen was opened for no longer exists (deleted, or a one-time one that was left): close. */
+    val gone: Boolean = false,
+    /** The profile being edited, named only when there is more than one to tell apart. */
+    val profileName: String? = null,
+    /** The profile turns Do Not Disturb on while Focus runs with it. */
+    val dnd: Boolean = false,
     val defaultMinutes: Int = 60,
     /** Every category (empty ones too, so they can be filled), then the uncategorised held apps. */
     val groups: List<CategoryGroup> = emptyList(),
@@ -94,10 +107,13 @@ class RulesViewModel(
     private val categories: AppCategoryResolver,
     private val signals: UiSignals,
     private val newId: () -> String,
+    /** The profile this screen edits; null = the one that is active when the screen opens. */
+    profileArg: String?,
 ) : ViewModel() {
 
     @Inject
     constructor(
+        savedStateHandle: SavedStateHandle,
         settings: SettingsStore,
         actions: FocusActions,
         repo: NotificationRepository,
@@ -105,7 +121,14 @@ class RulesViewModel(
         labels: AppLabelResolver,
         categories: AppCategoryResolver,
         signals: UiSignals,
-    ) : this(settings, actions, repo, appsSource, labels, categories, signals, { UUID.randomUUID().toString() })
+    ) : this(settings, actions, repo, appsSource, labels, categories, signals, { UUID.randomUUID().toString() }, savedStateHandle[Routes.ARG_PROFILE])
+
+    /**
+     * The profile being edited, fixed for the life of the screen. It never follows the active
+     * profile: a schedule switching profiles while the screen is open must not move an edit meant
+     * for one profile into another.
+     */
+    private val profileId = MutableStateFlow(profileArg)
 
     private val overlay = MutableStateFlow(Overlay())
 
@@ -125,9 +148,15 @@ class RulesViewModel(
             }
         }
 
-    val state: StateFlow<RulesUiState> = combine(settings.settings, overlay, picker) { s, o, p ->
+    val state: StateFlow<RulesUiState> = combine(settings.settings, overlay, picker, profileId) { all, o, p, id ->
+        id ?: return@combine RulesUiState()
+        val profile = all.profile(id) ?: return@combine RulesUiState(gone = true)
+        // The settings as they would be with this profile active: every rule function reads it unchanged.
+        val s = all.viewOf(profile.id)
         RulesUiState(
             loading = !s.rules.seeded,
+            profileName = profile.name.takeIf { all.profileList.size > 1 },
+            dnd = profile.dnd,
             defaultMinutes = s.slotMinutes,
             groups = s.categoryGroups(labels::label),
             chatRules = s.rules.chatRules
@@ -163,6 +192,7 @@ class RulesViewModel(
     fun seed() {
         edit {
             val current = settings.current()
+            if (profileId.value == null) profileId.value = current.activeProfile.id
             if (!current.rules.seeded) {
                 val osCategories = current.holdPackages.associateWith(categories::osCategory)
                 actions.updateRules { it.seededWithPresets(osCategories::get) }
@@ -192,7 +222,12 @@ class RulesViewModel(
         if (added > 0 || reportNothing) overlay.update { it.copy(autoSorted = added) }
     }
 
-    fun setDefaultMinutes(minutes: Int) = edit { actions.setSlotMinutes(minutes) }
+    fun setDnd(on: Boolean) = edit { profileId.value?.let { id -> actions.updateRules { it.withProfileDnd(id, on) } } }
+
+    fun setDefaultMinutes(minutes: Int) {
+        require(minutes > 0) { "the default interval must be positive, was $minutes" }
+        update { it.copy(slotMinutes = minutes) }
+    }
 
     /** [minutes] null = follow the default interval. */
     fun setCategoryMinutes(id: String, minutes: Int?) = update { it.withCategoryMinutes(id, minutes) }
@@ -261,7 +296,10 @@ class RulesViewModel(
         overlay.update { it.copy(error = null) }
     }
 
-    private fun update(transform: (Settings) -> Settings) = edit { actions.updateRules(transform) }
+    /** A rule edit lands in the profile this screen is for, active or not; if that profile is gone it changes nothing. */
+    private fun update(transform: (Settings) -> Settings) = edit {
+        profileId.value?.let { id -> actions.updateRules { it.withProfileEdited(id, transform) } }
+    }
 
     /**
      * A rule edit also re-runs delivery; if that (or the write) fails, say why instead of silently

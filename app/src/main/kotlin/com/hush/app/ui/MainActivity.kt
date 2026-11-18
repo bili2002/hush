@@ -38,6 +38,7 @@ import com.hush.app.ui.focus.FocusScreen
 import com.hush.app.ui.history.DigestLink
 import com.hush.app.ui.history.HistoryScreen
 import com.hush.app.ui.rules.RulesScreen
+import com.hush.app.ui.schedule.ScheduleScreen
 import com.hush.app.ui.settings.SettingsScreen
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
@@ -151,7 +152,11 @@ fun HushRoot(
         ) {
             composable(Routes.HISTORY) { HistoryScreen() }
             composable(Routes.FOCUS) { FocusScreen() }
-            composable(Routes.FOCUS_RULES) { RulesScreen(onBack = { navController.popBackStack() }) }
+            composable(
+                Routes.FOCUS_RULES_PATTERN,
+                arguments = listOf(navArgument(Routes.ARG_PROFILE) { type = NavType.StringType; nullable = true }),
+            ) { RulesScreen(onBack = { navController.popBackStack() }) }
+            composable(Routes.FOCUS_SCHEDULE) { ScheduleScreen(onBack = { navController.popBackStack() }) }
             composable(Routes.SETTINGS) { SettingsScreen(onOpenPicker = { navController.navigate(it) }) }
             composable(
                 Routes.APP_PICKER_PATTERN,

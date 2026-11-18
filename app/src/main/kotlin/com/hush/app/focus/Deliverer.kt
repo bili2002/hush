@@ -11,6 +11,7 @@ import android.text.format.DateFormat
 import com.hush.app.R
 import com.hush.app.db.NotificationEvent
 import com.hush.app.db.NotificationRepository
+import com.hush.app.settings.Settings
 import com.hush.app.settings.SettingsStore
 import com.hush.app.ui.MainActivity
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -26,7 +27,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * Owns the HELD → DELIVERED transition: selects the held-undelivered rows that are due, posts ONE
- * digest notification, marks those rows delivered, and re-arms the slot alarm. Callers: the slot alarm ([DeliveryReceiver]), boot/time-change
+ * digest notification, marks those rows delivered, and re-arms the alarm. Callers: the alarm ([DeliveryReceiver]), boot/time-change
  * ([RescheduleReceiver]), the UI ([DefaultFocusActionsImpl]) and the Sync worker's periodic
  * safety net. All of them can overlap, hence the [Mutex].
  */
@@ -37,6 +38,7 @@ class Deliverer @Inject constructor(
     private val settings: SettingsStore,
     private val clock: Clock,
     private val scheduler: DeliveryScheduler,
+    private val automation: FocusAutomation,
 ) {
     private val mutex = Mutex()
     private val notificationManager get() = ctx.getSystemService(NotificationManager::class.java)
@@ -55,14 +57,21 @@ class Deliverer @Inject constructor(
      * notification id) but also lists the previous one's rows and links to all of them, so a
      * frequent small digest cannot bury a bigger one the owner has not looked at yet.
      *
-     * The alarm is one-shot, so it is re-armed on every exit path while Focus is enabled, and also
-     * while anything is still held (Focus off but delivery blocked), so the next slot retries.
+     * Every run first lets the profile schedule have its say ([FocusAutomation.apply]): it may
+     * switch profile or turn Focus on or off, and the rows are then judged under what results. A
+     * schedule that turns Focus off therefore releases everything held in the same run.
+     *
+     * The alarm is one-shot, so it is re-armed on every exit path: for the next slot while Focus
+     * is enabled or anything is still held (Focus off but delivery blocked), and for the next
+     * schedule change.
      */
     suspend fun deliverDue(force: Boolean = false): DeliverResult = mutex.withLock {
         val now = clock.millis()
-        val current = settings.current()
         var stillHeld = false
+        // Inside the try: if the schedule cannot be applied the alarm must still be re-armed.
+        var applied: Settings? = null
         try {
+            val current = automation.apply(now).also { applied = it }
             val rows = repo.selectHeldUndelivered()
             if (rows.isEmpty()) return@withLock DeliverResult(0)
             stillHeld = true
@@ -93,7 +102,8 @@ class Deliverer @Inject constructor(
             stillHeld = due.size < rows.size
             DeliverResult(due.size)
         } finally {
-            if (current.focusEnabled || stillHeld) scheduler.schedule(now)
+            // A run that failed before it could look at the rows assumes some are held: one alarm too many beats none.
+            scheduler.rearm(now, held = stillHeld || applied == null)
         }
     }
 

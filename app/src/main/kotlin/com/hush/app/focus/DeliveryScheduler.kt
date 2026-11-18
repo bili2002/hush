@@ -12,10 +12,11 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Arms the one-shot digest alarm for the next slot boundary of any interval in use (the default,
- * a category's, a chat rule's): whichever comes first is when something can next become due. `setAndAllowWhileIdle` fires in Doze
- * (possibly a few minutes late, never early) and needs no exact-alarm permission. The alarm is
- * one-shot, so [Deliverer] re-arms it after every alarm-triggered run.
+ * Arms the one-shot alarm for the next moment something has to happen: the next slot boundary of
+ * any interval in use (the default, a category's, a chat rule's), or the next change the profile
+ * schedule brings, whichever comes first. `setAndAllowWhileIdle` fires in Doze (possibly a few
+ * minutes late, never early) and needs no exact-alarm permission. The alarm is one-shot, so
+ * [Deliverer] re-arms it at the end of every run.
  */
 @Singleton
 class DeliveryScheduler @Inject constructor(
@@ -24,10 +25,14 @@ class DeliveryScheduler @Inject constructor(
 ) {
     private val alarmManager get() = ctx.getSystemService(AlarmManager::class.java)
 
-    /** Schedules the alarm at the earliest upcoming boundary in the device zone and returns that trigger time. */
-    suspend fun schedule(nowMillis: Long): Long {
-        val triggerAt = nextBoundary(nowMillis, settings.current(), ZoneId.systemDefault())
-        alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent())
+    /**
+     * Arms the alarm for [nextWake] in the device zone, or clears it when there is nothing to wake
+     * for. [held]: rows are still held, so a digest retry is owed even with Focus off. Returns the
+     * trigger time, or null when the alarm was cleared.
+     */
+    suspend fun rearm(nowMillis: Long, held: Boolean): Long? {
+        val triggerAt = nextWake(nowMillis, settings.current(), ZoneId.systemDefault(), held)
+        if (triggerAt == null) cancel() else alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent())
         return triggerAt
     }
 
@@ -53,5 +58,15 @@ class DeliveryScheduler @Inject constructor(
          */
         fun nextBoundary(nowMillis: Long, settings: Settings, zone: ZoneId): Long =
             settings.activeThrottles().ifEmpty { setOf(settings.slotMinutes) }.minOf { nextSlot(nowMillis, it, zone) }
+
+        /**
+         * When the alarm has to fire next: the digest boundary while Focus is on or rows are
+         * [held], and the next schedule change (which is what turns Focus on while it is off).
+         * Null when neither applies.
+         */
+        fun nextWake(nowMillis: Long, settings: Settings, zone: ZoneId, held: Boolean): Long? = listOfNotNull(
+            nextBoundary(nowMillis, settings, zone).takeIf { settings.focusEnabled || held },
+            settings.nextScheduleChange(nowMillis, zone),
+        ).minOrNull()
     }
 }

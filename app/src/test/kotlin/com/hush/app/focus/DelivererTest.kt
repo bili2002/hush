@@ -9,6 +9,7 @@ import android.text.format.DateFormat
 import org.robolectric.RuntimeEnvironment
 import com.hush.app.db.NotificationRepository
 import com.hush.app.settings.Settings
+import com.hush.app.testing.FakeDnd
 import com.hush.app.testing.FakeSettingsStore
 import com.hush.app.testing.event
 import com.hush.app.testing.fixedClock
@@ -56,7 +57,7 @@ class DelivererTest {
         TimeZone.setDefault(TimeZone.getTimeZone("UTC"))
         repo = testRepository(clock)
         settings = FakeSettingsStore(focusOn)
-        deliverer = Deliverer(ctx, repo, settings, clock, DeliveryScheduler(ctx, settings))
+        deliverer = Deliverer(ctx, repo, settings, clock, DeliveryScheduler(ctx, settings), FocusAutomation(settings, FakeDnd()))
     }
 
     @AfterTest fun tearDown() = TimeZone.setDefault(originalZone)
@@ -179,7 +180,7 @@ class DelivererTest {
     /** A second deliverer over the same DB, settings and notification manager, [minutes] later (22:13:20 + minutes). */
     private fun delivererAt(minutes: Long): Deliverer {
         val later = fixedClock(now + minutes * 60_000L)
-        return Deliverer(ctx, repo, settings, later, DeliveryScheduler(ctx, settings))
+        return Deliverer(ctx, repo, settings, later, DeliveryScheduler(ctx, settings), FocusAutomation(settings, FakeDnd()))
     }
 
     private fun fastAlpha() = focusOn.copy(

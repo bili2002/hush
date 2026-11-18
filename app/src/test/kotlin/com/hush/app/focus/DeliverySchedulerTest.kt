@@ -32,7 +32,7 @@ class DeliverySchedulerTest {
     @Test
     fun schedulesExactlyOneWakeupAlarmAtNextSlot() = runTest {
         val scheduler = DeliveryScheduler(ctx, FakeSettingsStore(Settings(slotMinutes = 60)))
-        val trigger = scheduler.schedule(now)
+        val trigger = scheduler.rearm(now, held = true)
         assertEquals(nextSlot(now, 60, ZoneId.of("UTC")), trigger)
         assertEquals(1, alarms.size)
         assertEquals(AlarmManager.RTC_WAKEUP, alarms.single().type)
@@ -43,18 +43,41 @@ class DeliverySchedulerTest {
     fun reschedulingReplacesInsteadOfStacking() = runTest {
         val store = FakeSettingsStore(Settings(slotMinutes = 60))
         val scheduler = DeliveryScheduler(ctx, store)
-        scheduler.schedule(now)
+        scheduler.rearm(now, held = true)
         store.update { it.copy(slotMinutes = 15) }
-        val trigger = scheduler.schedule(now)
+        val trigger = scheduler.rearm(now, held = true)
         assertEquals(1, alarms.size)
         assertEquals(nextSlot(now, 15, ZoneId.of("UTC")), alarms.single().triggerAtTime)
         assertEquals(trigger, alarms.single().triggerAtTime)
     }
 
     @Test
+    fun withFocusOffAndNothingHeldThereIsNothingToWakeFor() = runTest {
+        val scheduler = DeliveryScheduler(ctx, FakeSettingsStore(Settings(slotMinutes = 60)))
+        scheduler.rearm(now, held = true)
+        assertEquals(null, scheduler.rearm(now, held = false))
+        assertEquals(0, alarms.size)
+    }
+
+    @Test
+    fun wakesForTheScheduleEvenWhileFocusIsOff_andForWhicheverComesFirstWhileOn() = runTest {
+        // Tuesday 22:13 UTC. An entry starts at 22:30.
+        val entry = ScheduleEntry("e", DEFAULT_PROFILE_ID, setOf(2), 22 * 60 + 30, 23 * 60 + 30)
+        val off = Settings(slotMinutes = 60, holdPackages = setOf("com.example.alpha")).withScheduleEntry(entry)
+        val start = now - (13 * 60_000L + 20_000L) + 30 * 60_000L
+        val utc = ZoneId.of("UTC")
+
+        assertEquals(start, DeliveryScheduler(ctx, FakeSettingsStore(off)).rearm(now, held = false))
+        assertEquals(start, alarms.single().triggerAtTime)
+
+        assertEquals(start, DeliveryScheduler.nextWake(now, off.copy(focusEnabled = true), utc, held = false), "22:30 start before the 23:00 digest")
+        assertEquals(nextSlot(now, 15, utc), DeliveryScheduler.nextWake(now, off.copy(focusEnabled = true, slotMinutes = 15), utc, held = false))
+    }
+
+    @Test
     fun cancelClearsTheAlarm() = runTest {
         val scheduler = DeliveryScheduler(ctx, FakeSettingsStore())
-        scheduler.schedule(now)
+        scheduler.rearm(now, held = true)
         scheduler.cancel()
         assertEquals(0, alarms.size)
     }
@@ -68,7 +91,7 @@ class DeliverySchedulerTest {
             chatRules = listOf(ChatRule("com.example.gamma", "c1", "Group one", 240)),
         )
         val store = FakeSettingsStore(Settings(slotMinutes = 60, holdPackages = setOf("com.example.alpha", "com.example.beta"), rules = rules))
-        val trigger = DeliveryScheduler(ctx, store).schedule(now)
+        val trigger = DeliveryScheduler(ctx, store).rearm(now, held = true)
         assertEquals(nextSlot(now, 15, ZoneId.of("UTC")), trigger)
         assertEquals(trigger, alarms.single().triggerAtTime)
     }

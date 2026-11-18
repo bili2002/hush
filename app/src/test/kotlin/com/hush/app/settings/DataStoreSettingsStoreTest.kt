@@ -3,9 +3,13 @@ package com.hush.app.settings
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
-import com.hush.app.focus.ChatRule
 import com.hush.app.focus.FocusCategory
+import com.hush.app.focus.ChatRule
+import com.hush.app.focus.FocusProfile
+import com.hush.app.focus.FocusProfiles
 import com.hush.app.focus.FocusRules
+import com.hush.app.focus.ProfileConfig
+import com.hush.app.focus.ScheduleEntry
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -94,5 +98,33 @@ class DataStoreSettingsStoreTest {
 
         store.update { it.copy(rules = FocusRules(seeded = true)) }
         assertEquals(FocusRules(seeded = true), store.current().rules)
+    }
+
+    @Test
+    fun `profiles round-trip, and an unreadable profiles blob reads as the one live profile and survives unrelated writes`() = runTest(scope.testScheduler) {
+        val key = stringPreferencesKey("focus_profiles")
+        val dataStore = PreferenceDataStoreFactory.create(scope = scope) { File(tmp.root, "settings.preferences_pb") }
+        val store = DataStoreSettingsStore(dataStore)
+        assertEquals(FocusProfiles(), store.current().profiles)
+        assertEquals(null, dataStore.data.first()[key], "nothing is written until profiles are edited")
+
+        val profiles = FocusProfiles(
+            list = listOf(
+                FocusProfile("default", "Default"),
+                FocusProfile("p2", "Evening", oneTime = true, dnd = true, config = ProfileConfig(30, mapOf("g" to -1), listOf(ChatRule("com.example.alpha", "c1", "Group one", 240)))),
+            ),
+            activeId = "p2",
+            schedule = listOf(ScheduleEntry("e", "p2", setOf(1, 7), 22 * 60, 7 * 60)),
+            manualUntil = 123L,
+            dndByHush = true,
+            dndError = "no access",
+        )
+        store.update { it.copy(profiles = profiles) }
+        assertEquals(profiles, store.current().profiles)
+
+        dataStore.edit { it[key] = "{not json" }
+        assertEquals(FocusProfiles(), store.current().profiles)
+        store.update { it.copy(listenerConnectedAt = 1L) }
+        assertEquals("{not json", dataStore.data.first()[key])
     }
 }

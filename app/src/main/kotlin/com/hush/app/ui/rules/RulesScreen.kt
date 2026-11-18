@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -37,10 +38,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -79,6 +82,7 @@ import com.hush.app.ui.components.throttleLabel
 data class RulesCallbacks(
     val onBack: () -> Unit = {},
     val onDefault: (Int) -> Unit = {},
+    val onDnd: (Boolean) -> Unit = {},
     val onCategoryMinutes: (String, Int?) -> Unit = { _, _ -> },
     val onAddCategory: (String) -> Unit = {},
     val onRenameCategory: (String, String) -> Unit = { _, _ -> },
@@ -103,11 +107,14 @@ data class RulesCallbacks(
 @Composable
 fun RulesScreen(onBack: () -> Unit, vm: RulesViewModel = hiltViewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
+    // The profile was deleted under the screen: there is nothing left here to edit.
+    LaunchedEffect(state.gone) { if (state.gone) onBack() }
     RulesContent(
         state = state,
         callbacks = RulesCallbacks(
             onBack = onBack,
             onDefault = vm::setDefaultMinutes,
+            onDnd = vm::setDnd,
             onCategoryMinutes = vm::setCategoryMinutes,
             onAddCategory = vm::addCategory,
             onRenameCategory = vm::renameCategory,
@@ -148,7 +155,13 @@ fun RulesContent(state: RulesUiState, callbacks: RulesCallbacks) {
         topBar = {
             TopAppBar(
                 windowInsets = WindowInsets(0),
-                title = { Text(stringResource(R.string.rules_title)) },
+                title = {
+                    Text(
+                        state.profileName?.let { stringResource(R.string.rules_title_profile, it) } ?: stringResource(R.string.rules_title),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = callbacks.onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.apps_back))
@@ -184,7 +197,7 @@ fun RulesContent(state: RulesUiState, callbacks: RulesCallbacks) {
             state.error?.let { message ->
                 item(key = "error") { ErrorLine(message, callbacks.onDismissError) }
             }
-            item(key = "default") { DefaultCard(state.defaultMinutes, callbacks.onDefault) }
+            item(key = "default") { DefaultCard(state.defaultMinutes, state.dnd, callbacks.onDefault, callbacks.onDnd) }
             items(state.groups, key = { "group-${it.id}" }) { group ->
                 GroupCard(
                     group = group,
@@ -264,12 +277,24 @@ private fun ErrorLine(message: String, onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun DefaultCard(minutes: Int, onPick: (Int) -> Unit) {
+private fun DefaultCard(minutes: Int, dnd: Boolean, onPick: (Int) -> Unit, onDnd: (Boolean) -> Unit) {
     HushCard(modifier = Modifier.fillMaxWidth()) {
         Row(modifier = Modifier.padding(start = 16.dp, end = 12.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(stringResource(R.string.rules_default_title), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             // The same chip as every other throttle on this screen; the default itself has nothing to inherit from.
             ThrottleChip(minutes = minutes, inheritLabel = null, offerInstant = false, onPick = { it?.let(onPick) })
+        }
+        HorizontalDivider()
+        // One click target: the row toggles, the switch only shows the state.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .toggleable(value = dnd, role = Role.Switch, onValueChange = onDnd)
+                .padding(start = 16.dp, end = 12.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(stringResource(R.string.rules_dnd), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            Switch(checked = dnd, onCheckedChange = null)
         }
     }
 }

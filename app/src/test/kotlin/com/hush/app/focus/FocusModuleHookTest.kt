@@ -45,6 +45,6 @@ class FocusModuleHookTest {
         repo.insert(event("old", postTime = now - 2 * 60 * 60_000L, held = true))
         hook.deliverDue()
         assertEquals(1, shadowOf(nm).allNotifications.size)
-        assertEquals(0, repo.selectHeldUndelivered().size)
+        assertEquals(listOf("fresh"), repo.selectHeldUndelivered().map { it.id }, "the row that is not due yet stays held")
     }
 }

@@ -1,6 +1,11 @@
 package com.hush.app.settings
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
+import com.hush.app.focus.ChatRule
+import com.hush.app.focus.FocusCategory
+import com.hush.app.focus.FocusRules
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -52,6 +57,12 @@ class DataStoreSettingsStoreTest {
             lastSyncError = "boom",
             lastFocusError = "bang",
             setupDone = true,
+            rules = FocusRules(
+                categories = listOf(FocusCategory("fast", "Fast", 15), FocusCategory("inherit", "Inherit", null), FocusCategory("off", "Off", 0)),
+                appCategory = mapOf("com.example.alpha" to "fast"),
+                chatRules = listOf(ChatRule("com.example.alpha", "c1", "Group \"one\"", 240)),
+                seeded = true,
+            ),
         )
 
         store.update { changed }
@@ -62,5 +73,17 @@ class DataStoreSettingsStoreTest {
         assertEquals(null, after.lastSyncError)
         assertEquals(null, after.listenerConnectedAt)
         assertEquals(changed.copy(lastSyncError = null, listenerConnectedAt = null), after)
+    }
+
+    @Test
+    fun `an unreadable rules blob reads as no rules and is replaced by the next write`() = runTest(scope.testScheduler) {
+        val dataStore = PreferenceDataStoreFactory.create(scope = scope) { File(tmp.root, "settings.preferences_pb") }
+        dataStore.edit { it[stringPreferencesKey("focus_rules")] = "{not json" }
+        val store = DataStoreSettingsStore(dataStore)
+
+        assertEquals(FocusRules(), store.current().rules)
+
+        store.update { it.copy(rules = FocusRules(seeded = true)) }
+        assertEquals(FocusRules(seeded = true), store.current().rules)
     }
 }

@@ -31,9 +31,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -46,7 +43,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -54,20 +53,22 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.hush.app.R
+import com.hush.app.focus.CategoryGroup
 import com.hush.app.ui.components.appNotificationSettingsIntent
 import com.hush.app.ui.components.findActivity
 import com.hush.app.ui.components.formatClock
 import com.hush.app.ui.components.relativeAgo
 import com.hush.app.ui.components.startActivitySafely
+import com.hush.app.ui.components.throttleEvery
 import java.time.ZoneId
 
 /** Everything the Focus screen can ask the outside world to do; stateless content takes this so previews can no-op it. */
 data class FocusCallbacks(
     val onToggle: (Boolean) -> Unit = {},
-    val onSlot: (Int) -> Unit = {},
     val onDeliverNow: () -> Unit = {},
     val onDismissResult: () -> Unit = {},
     val onEditHoldList: () -> Unit = {},
+    val onManageRules: () -> Unit = {},
     val onOpenListenerSettings: () -> Unit = {},
     val onRequestPostPermission: () -> Unit = {},
     val onOpenBatterySettings: () -> Unit = {},
@@ -104,10 +105,10 @@ fun FocusScreen(vm: FocusViewModel = hiltViewModel()) {
         launchFailed = launchFailed,
         callbacks = FocusCallbacks(
             onToggle = vm::setEnabled,
-            onSlot = vm::setSlotMinutes,
             onDeliverNow = vm::deliverNow,
             onDismissResult = vm::dismissDeliverResult,
             onEditHoldList = vm::editHoldList,
+            onManageRules = vm::manageRules,
             onOpenListenerSettings = { open(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
             onRequestPostPermission = {
                 if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return@FocusCallbacks
@@ -163,7 +164,7 @@ fun FocusContent(
 
         state.lastFocusError?.let { ErrorCard(title = stringResource(R.string.focus_error_title), message = it) }
 
-        HoldListRow(state.holdLabels, callbacks.onEditHoldList)
+        RulesSummaryCard(state.groups, state.chatRuleCount, callbacks.onManageRules)
 
         state.checklist?.let { ChecklistCard(it, callbacks) }
 
@@ -201,16 +202,6 @@ private fun ToggleCard(state: FocusUiState, zone: ZoneId, callbacks: FocusCallba
                             stringResource(R.string.focus_next_digest, formatClock(at, zone), state.heldCount),
                             style = MaterialTheme.typography.titleMedium,
                         )
-                    }
-                }
-                Text(stringResource(R.string.focus_slot_label), style = MaterialTheme.typography.labelLarge)
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    SLOT_CHOICES.forEachIndexed { index, minutes ->
-                        SegmentedButton(
-                            selected = state.slotMinutes == minutes,
-                            onClick = { callbacks.onSlot(minutes) },
-                            shape = SegmentedButtonDefaults.itemShape(index = index, count = SLOT_CHOICES.size),
-                        ) { Text(stringResource(R.string.focus_slot_minutes, minutes)) }
                     }
                 }
                 Button(onClick = callbacks.onDeliverNow, enabled = !state.delivering, modifier = Modifier.fillMaxWidth()) {
@@ -280,16 +271,48 @@ private fun ErrorCard(title: String, message: String) {
     }
 }
 
+/** Who is held and how often, at a glance; the whole card opens "Apps & throttles". */
 @Composable
-private fun HoldListRow(labels: List<String>, onEdit: () -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            if (labels.isEmpty()) stringResource(R.string.focus_holding_none)
-            else stringResource(R.string.focus_holding, labels.joinToString(", ")),
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyLarge,
-        )
-        TextButton(onClick = onEdit) { Text(stringResource(R.string.focus_edit)) }
+private fun RulesSummaryCard(groups: List<CategoryGroup>, chatRuleCount: Int, onManage: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onManage)) {
+        Column(modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.focus_rules_title), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                TextButton(onClick = onManage) { Text(stringResource(R.string.focus_rules_manage)) }
+            }
+            if (groups.isEmpty()) {
+                Text(
+                    stringResource(R.string.focus_rules_none),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            groups.forEach { group ->
+                Column {
+                    Text(
+                        stringResource(
+                            R.string.focus_rules_group,
+                            group.name ?: stringResource(R.string.rules_uncategorised),
+                            throttleEvery(group.effectiveMinutes),
+                        ),
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    Text(
+                        group.apps.joinToString(", ") { it.label },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (chatRuleCount > 0) {
+                Text(
+                    pluralStringResource(R.plurals.focus_rules_chat_rules, chatRuleCount, chatRuleCount),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+            }
+        }
     }
 }
 

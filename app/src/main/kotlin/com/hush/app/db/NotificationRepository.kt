@@ -51,9 +51,14 @@ class NotificationRepository @Inject constructor(
         chunked(ids) { queries.markDelivered(ts = deliveredAt, ids = it) }
     }
 
-    suspend fun selectHeldBatch(deliveredAt: Long): List<NotificationEvent> = withContext(Dispatchers.IO) {
-        queries.selectHeldBatch(deliveredAt).executeAsList().map { it.toEvent() }
+    /** Held rows delivered at or after [since], oldest first: what the digest carrying that `since` covers. */
+    suspend fun selectHeldBatch(since: Long): List<NotificationEvent> = withContext(Dispatchers.IO) {
+        queries.selectHeldBatch(since).executeAsList().map { it.toEvent() }
     }
+
+    /** Live view of the rows currently held back, oldest first. */
+    fun heldUndelivered(): Flow<List<NotificationEvent>> =
+        queries.selectHeldUndelivered().asFlow().mapToList(Dispatchers.IO).map { rows -> rows.map { it.toEvent() } }
 
     fun countHeld(): Flow<Long> = queries.countHeld().asFlow().mapToOne(Dispatchers.IO)
 

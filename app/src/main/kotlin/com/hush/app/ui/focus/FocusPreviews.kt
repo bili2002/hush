@@ -2,7 +2,9 @@ package com.hush.app.ui.focus
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.tooling.preview.Preview
+import com.hush.app.focus.CategoryGroup
 import com.hush.app.focus.DeliverResult
+import com.hush.app.focus.HeldApp
 import com.hush.app.ui.HushTheme
 import java.time.ZoneOffset
 
@@ -37,7 +39,11 @@ private fun FocusOnPreview() {
                 slotMinutes = 60,
                 heldCount = 7,
                 nextSlotAt = 14 * 3_600_000L,
-                holdLabels = listOf("Alpha", "Beta"),
+                groups = listOf(
+                    CategoryGroup("messaging", "Messaging", 15, 15, listOf(HeldApp("com.example.alpha", "Alpha"))),
+                    CategoryGroup(null, null, null, 60, listOf(HeldApp("com.example.beta", "Beta"))),
+                ),
+                chatRuleCount = 2,
                 listener = ListenerHealth.Connected(agoMillis = 2 * 60_000L),
                 deliverResult = DeliverResult(7),
             ),
@@ -57,7 +63,7 @@ private fun FocusErrorPreview() {
                 enabled = true,
                 heldCount = 1,
                 nextSlotAt = 15 * 3_600_000L,
-                holdLabels = listOf("Alpha"),
+                groups = listOf(CategoryGroup(null, null, null, 60, listOf(HeldApp("com.example.alpha", "Alpha")))),
                 lastFocusError = "Digest channel is blocked by the system",
                 listener = ListenerHealth.Connected(agoMillis = 0),
                 deliverResult = DeliverResult(0, "No digest channel"),

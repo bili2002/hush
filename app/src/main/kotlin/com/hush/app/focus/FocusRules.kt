@@ -1,0 +1,184 @@
+package com.hush.app.focus
+
+import com.hush.app.settings.Settings
+import kotlinx.serialization.Serializable
+
+/**
+ * A named group of held apps with its own digest interval. [minutes]: null = use the default
+ * interval ([Settings.slotMinutes]), [INSTANT] = do not hold, otherwise the interval in minutes.
+ */
+@Serializable
+data class FocusCategory(val id: String, val name: String, val minutes: Int? = null)
+
+/**
+ * A throttle for one chat ([chatKey] = `NotificationEvent.chatKey`) of one app. It wins over the
+ * app's category and also applies to an app that is not on the hold list. [title] is only for display.
+ */
+@Serializable
+data class ChatRule(val packageName: String, val chatKey: String, val title: String, val minutes: Int)
+
+/** Everything "who is held for how long" beyond the hold list itself. One JSON preference. */
+@Serializable
+data class FocusRules(
+    val categories: List<FocusCategory> = emptyList(),
+    /** Package → [FocusCategory.id]. Only meaningful for packages on the hold list. */
+    val appCategory: Map<String, String> = emptyMap(),
+    val chatRules: List<ChatRule> = emptyList(),
+    /** The preset categories were created once; deleting them all must not bring them back. */
+    val seeded: Boolean = false,
+)
+
+/** Throttle value meaning "not held: show it right away". */
+const val INSTANT = 0
+
+/** The intervals offered everywhere a throttle is picked. Each divides the next, so their slot boundaries nest. */
+val THROTTLE_CHOICES = listOf(15, 30, 60, 120, 240)
+
+fun Settings.categoryOf(packageName: String): FocusCategory? =
+    rules.appCategory[packageName]?.let { id -> rules.categories.firstOrNull { it.id == id } }
+
+fun Settings.chatRule(packageName: String, chatKey: String?): ChatRule? =
+    chatKey?.let { key -> rules.chatRules.firstOrNull { it.packageName == packageName && it.chatKey == key } }
+
+/** The app-level throttle: [INSTANT] when the app is not on the hold list, else its category's interval or the default. */
+fun Settings.appThrottleMinutes(packageName: String): Int =
+    if (packageName !in holdPackages) INSTANT else categoryOf(packageName)?.minutes ?: slotMinutes
+
+/**
+ * How long a notification of [packageName] in chat [chatKey] is held: chat rule → app category →
+ * default. [INSTANT] means it is not held at all. Whether Focus is on is the caller's business.
+ */
+fun Settings.throttleMinutes(packageName: String, chatKey: String?): Int =
+    chatRule(packageName, chatKey)?.minutes ?: appThrottleMinutes(packageName)
+
+/** The distinct intervals the current rules can hold something for; what the alarm has to wake up for. */
+fun Settings.activeThrottles(): Set<Int> =
+    (holdPackages.map(::appThrottleMinutes) + rules.chatRules.map { it.minutes }).filter { it > INSTANT }.toSet()
+
+/** False when turning Focus on would hold nothing (no held app with a real interval and no holding chat rule). */
+val Settings.holdsAnything: Boolean get() = activeThrottles().isNotEmpty()
+
+// ---- rule edits (pure; the UI applies them through FocusActions.updateRules) ----
+
+fun Settings.withCategoryAdded(id: String, name: String): Settings =
+    copy(rules = rules.copy(categories = rules.categories + FocusCategory(id, name.trim())))
+
+fun Settings.withCategoryRenamed(id: String, name: String): Settings =
+    copy(rules = rules.copy(categories = rules.categories.map { if (it.id == id) it.copy(name = name.trim()) else it }))
+
+fun Settings.withCategoryMinutes(id: String, minutes: Int?): Settings =
+    copy(rules = rules.copy(categories = rules.categories.map { if (it.id == id) it.copy(minutes = minutes) else it }))
+
+/** Deleting a category never un-holds its apps: they fall back to the default interval. */
+fun Settings.withoutCategory(id: String): Settings = copy(
+    rules = rules.copy(
+        categories = rules.categories.filterNot { it.id == id },
+        appCategory = rules.appCategory.filterValues { it != id },
+    ),
+)
+
+/** Puts a held app into [categoryId], or with null back among the uncategorised ones. */
+fun Settings.withAppInCategory(packageName: String, categoryId: String?): Settings = copy(
+    rules = rules.copy(
+        appCategory = if (categoryId == null) rules.appCategory - packageName else rules.appCategory + (packageName to categoryId),
+    ),
+)
+
+fun Settings.withHeldApp(packageName: String, categoryId: String?): Settings =
+    copy(holdPackages = holdPackages + packageName).let { if (categoryId == null) it else it.withAppInCategory(packageName, categoryId) }
+
+fun Settings.withoutHeldApp(packageName: String): Settings =
+    copy(holdPackages = holdPackages - packageName, rules = rules.copy(appCategory = rules.appCategory - packageName))
+
+/** Adds or replaces the rule for the rule's (package, chat). */
+fun Settings.withChatRule(rule: ChatRule): Settings = copy(
+    rules = rules.copy(
+        chatRules = rules.chatRules.filterNot { it.packageName == rule.packageName && it.chatKey == rule.chatKey } + rule,
+    ),
+)
+
+fun Settings.withoutChatRule(packageName: String, chatKey: String): Settings =
+    copy(rules = rules.copy(chatRules = rules.chatRules.filterNot { it.packageName == packageName && it.chatKey == chatKey }))
+
+// ---- presets ----
+
+object Presets {
+    const val MESSAGING = "messaging"
+    const val SOCIAL = "social"
+    const val WORK = "work"
+    const val NEWS = "news"
+
+    /** All on the default interval, so creating them changes nothing about what is held or when. */
+    val categories = listOf(
+        FocusCategory(MESSAGING, "Messaging"),
+        FocusCategory(SOCIAL, "Social"),
+        FocusCategory(WORK, "Email & work"),
+        FocusCategory(NEWS, "News"),
+    )
+
+    private val known: Map<String, String> = buildMap {
+        listOf(
+            "com.whatsapp", "com.whatsapp.w4b", "org.telegram.messenger", "org.thoughtcrime.securesms",
+            "com.facebook.orca", "com.viber.voip", "com.discord", "com.google.android.apps.messaging",
+            "com.samsung.android.messaging", "com.google.android.apps.dynamite",
+        ).forEach { put(it, MESSAGING) }
+        listOf(
+            "com.instagram.android", "com.instagram.barcelona", "com.facebook.katana", "com.zhiliaoapp.musically",
+            "com.twitter.android", "com.reddit.frontpage", "com.snapchat.android", "com.linkedin.android",
+            "com.pinterest", "org.joinmastodon.android", "com.google.android.youtube",
+        ).forEach { put(it, SOCIAL) }
+        listOf(
+            "com.google.android.gm", "com.microsoft.office.outlook", "com.Slack", "com.microsoft.teams",
+            "com.google.android.calendar",
+        ).forEach { put(it, WORK) }
+    }
+
+    // android.content.pm.ApplicationInfo.CATEGORY_* (plain ints so this stays a pure function).
+    private const val OS_SOCIAL = 4
+    private const val OS_NEWS = 5
+    private const val OS_PRODUCTIVITY = 7
+
+    /**
+     * The preset a newly held app most likely belongs in, or null. A short table of well-known
+     * packages first (the OS files messengers and social networks under one category), then the
+     * app's own declared [osCategory].
+     */
+    fun suggest(packageName: String, osCategory: Int?): String? = known[packageName] ?: when (osCategory) {
+        OS_SOCIAL -> SOCIAL
+        OS_NEWS -> NEWS
+        OS_PRODUCTIVITY -> WORK
+        else -> null
+    }
+}
+
+/** [Presets.suggest], narrowed to a category that still exists in these settings. */
+fun Settings.suggestedCategory(packageName: String, osCategory: Int?): String? =
+    Presets.suggest(packageName, osCategory)?.takeIf { id -> rules.categories.any { it.id == id } }
+
+/**
+ * One-time setup of the presets: creates them and sorts the apps already on the hold list into
+ * them. Intervals are untouched (every preset uses the default), so nothing changes behaviour.
+ */
+fun Settings.seededWithPresets(osCategory: (String) -> Int?): Settings {
+    if (rules.seeded) return this
+    val categories = rules.categories + Presets.categories.filterNot { p -> rules.categories.any { it.id == p.id } }
+    val sorted = holdPackages.filterNot { it in rules.appCategory }
+        .mapNotNull { pkg -> Presets.suggest(pkg, osCategory(pkg))?.let { pkg to it } }
+    return copy(rules = rules.copy(categories = categories, appCategory = rules.appCategory + sorted, seeded = true))
+}
+
+// ---- read model shared by the Focus summary and the rules screen ----
+
+data class HeldApp(val packageName: String, val label: String)
+
+/** [id]/[name] are null for the held apps that are in no category. [effectiveMinutes] resolves "default". */
+data class CategoryGroup(val id: String?, val name: String?, val minutes: Int?, val effectiveMinutes: Int, val apps: List<HeldApp>)
+
+/** Every category in its stored order (empty ones included), then the uncategorised held apps if there are any. */
+fun Settings.categoryGroups(label: (String) -> String): List<CategoryGroup> {
+    val byCategory = holdPackages.groupBy { categoryOf(it)?.id }
+    fun apps(id: String?) = byCategory[id].orEmpty().map { HeldApp(it, label(it)) }.sortedBy { it.label.lowercase() }
+    val named = rules.categories.map { c -> CategoryGroup(c.id, c.name, c.minutes, c.minutes ?: slotMinutes, apps(c.id)) }
+    val loose = apps(null)
+    return if (loose.isEmpty()) named else named + CategoryGroup(null, null, null, slotMinutes, loose)
+}

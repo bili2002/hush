@@ -2,6 +2,7 @@ package com.hush.app.ui.components
 
 import android.Manifest
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.PowerManager
@@ -65,4 +66,17 @@ class AndroidAppLabelResolver @Inject constructor(@ApplicationContext private va
             ?.takeIf { it.isNotBlank() }
             ?: packageName
     }
+}
+
+/** The category an app declares to the OS (`ApplicationInfo.category`), or null. A seam for the preset suggestion. */
+fun interface AppCategoryResolver {
+    fun osCategory(packageName: String): Int?
+}
+
+@Singleton
+class AndroidAppCategoryResolver @Inject constructor(@ApplicationContext private val context: Context) : AppCategoryResolver {
+    override fun osCategory(packageName: String): Int? =
+        runCatching { context.packageManager.getApplicationInfo(packageName, 0).category }
+            .getOrNull()
+            ?.takeIf { it != ApplicationInfo.CATEGORY_UNDEFINED }
 }

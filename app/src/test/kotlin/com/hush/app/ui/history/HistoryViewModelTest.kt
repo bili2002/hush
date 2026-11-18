@@ -3,7 +3,12 @@ package com.hush.app.ui.history
 import com.hush.app.db.EventType
 import com.hush.app.db.NotificationRepository
 import com.hush.app.db.ChatSummary
+import com.hush.app.focus.ChatRule
+import com.hush.app.focus.INSTANT
 import com.hush.app.open.OpenResult
+import com.hush.app.settings.Settings
+import com.hush.app.testing.FakeFocusActions
+import com.hush.app.testing.FakeSettingsStore
 import com.hush.app.testing.FakeOpener
 import com.hush.app.testing.FakeSystemStatus
 import com.hush.app.testing.MainDispatcherRule
@@ -38,10 +43,12 @@ class HistoryViewModelTest {
     private val system = FakeSystemStatus()
     private val signals = UiSignals()
     private val opener = FakeOpener()
+    private val settings = FakeSettingsStore(Settings(slotMinutes = 60, holdPackages = setOf("com.example.alpha")))
+    private val focusActions = FakeFocusActions(settings)
     private val vms = mutableListOf<HistoryViewModel>()
 
     private fun vm(): HistoryViewModel =
-        HistoryViewModel(repo, system, signals, opener, ZoneOffset.UTC, debounceMillis = HistoryViewModel.DEBOUNCE_MILLIS).also { vms += it }
+        HistoryViewModel(repo, system, signals, opener, settings, focusActions, ZoneOffset.UTC, debounceMillis = HistoryViewModel.DEBOUNCE_MILLIS).also { vms += it }
 
     @After
     fun tearDown() = vms.forEach { it.cancelAndJoin() }
@@ -201,7 +208,7 @@ class HistoryViewModelTest {
     }
 
     @Test
-    fun `digest link shows only the held batch delivered at that time and clearing returns to browse`() = runTest {
+    fun `digest link shows the held rows delivered since its time and clearing returns to browse`() = runTest {
         repo.insert(event("h1", held = true, postTime = 1))
         repo.insert(event("h2", held = true, postTime = 2))
         repo.insert(event("h3", held = true, postTime = 3))
@@ -211,12 +218,17 @@ class HistoryViewModelTest {
         val vm = vm()
         assertEquals(listOf("p", "h3", "h2", "h1"), vm.loaded().ids())
 
-        signals.digestLink.value = DigestLink(deliveredAt = 1_000)
+        signals.digestLink.value = DigestLink(deliveredAt = 2_000)
 
         val batch = vm.state.first { it.mode is HistoryMode.HeldBatch }
-        assertEquals(HistoryMode.HeldBatch(1_000), batch.mode)
-        assertEquals(listOf("h2", "h1"), batch.ids(), "batch is newest-first like the rest of the list")
-        assertEquals(1_000L, batch.days.single().items.first().deliveredAt)
+        assertEquals(HistoryMode.HeldBatch(2_000), batch.mode)
+        assertEquals(listOf("h3"), batch.ids())
+        assertEquals(2_000L, batch.days.single().items.first().deliveredAt)
+
+        // A digest that replaced an unread one links to the older delivery time and covers both runs.
+        signals.digestLink.value = DigestLink(deliveredAt = 1_000)
+        val carried = vm.state.first { it.mode == HistoryMode.HeldBatch(1_000) }
+        assertEquals(listOf("h3", "h2", "h1"), carried.ids(), "batch is newest-first like the rest of the list")
 
         vm.clearDigestLink()
 
@@ -275,6 +287,66 @@ class HistoryViewModelTest {
 
         vm.toggleExpanded("a")
         assertNull(vm.state.first { it.expandedId == null }.expandedId)
+    }
+
+    @Test
+    fun `throttle this chat shows what the chat gets now, and the choice becomes a chat rule`() = runTest {
+        val row = event("g1", conversationId = "c1", conversationTitle = "Group one", appLabel = "Alpha")
+        repo.insert(row)
+        val vm = vm()
+        vm.loaded()
+
+        vm.askChatThrottle(row)
+        val dialog = vm.state.first { it.chatThrottle != null }.chatThrottle
+        assertEquals(ChatThrottle("com.example.alpha", "c1", "Group one", "Alpha", ruleMinutes = null, appMinutes = 60), dialog)
+
+        vm.setChatThrottle(240)
+        assertNull(vm.state.first { it.chatThrottle == null }.chatThrottle, "picking closes the dialog")
+        assertEquals(listOf(ChatRule("com.example.alpha", "c1", "Group one", 240)), settings.state.value.rules.chatRules)
+
+        vm.askChatThrottle(row)
+        assertEquals(240, vm.state.first { it.chatThrottle != null }.chatThrottle?.ruleMinutes)
+        vm.setChatThrottle(INSTANT)
+        assertEquals(INSTANT, settings.state.first { it.rules.chatRules.singleOrNull()?.minutes == INSTANT }.rules.chatRules.single().minutes)
+
+        vm.askChatThrottle(row)
+        vm.state.first { it.chatThrottle != null }
+        vm.setChatThrottle(null)
+        assertTrue(settings.state.first { it.rules.chatRules.isEmpty() }.rules.chatRules.isEmpty(), "same as app = no rule")
+    }
+
+    @Test
+    fun `a chat of an app that is not held reports the app as not held, and a row without a chat opens no dialog`() = runTest {
+        val vm = vm()
+        vm.loaded()
+
+        vm.askChatThrottle(event("b1", packageName = "com.example.beta", title = "Sender A"))
+        val dialog = vm.state.first { it.chatThrottle != null }.chatThrottle
+        assertEquals(INSTANT, dialog?.appMinutes)
+        assertEquals("Sender A", dialog?.chatKey, "no conversation id: the title is the chat")
+        vm.dismissChatThrottle()
+        vm.state.first { it.chatThrottle == null }
+
+        vm.askChatThrottle(event("n", title = null))
+        vm.setQuery("x")
+        assertNull(vm.state.first { (it.mode as? HistoryMode.Browse)?.query == "x" }.chatThrottle)
+    }
+
+    @Test
+    fun `a chat rule that cannot be saved shows its cause until dismissed`() = runTest {
+        val row = event("g1", conversationId = "c1", conversationTitle = "Group one")
+        val vm = vm()
+        vm.loaded()
+        focusActions.rulesError = IllegalStateException("disk full")
+
+        vm.askChatThrottle(row)
+        vm.state.first { it.chatThrottle != null }
+        vm.setChatThrottle(15)
+
+        assertEquals("disk full", vm.state.first { it.ruleError != null }.ruleError)
+        assertTrue(settings.state.value.rules.chatRules.isEmpty())
+        vm.dismissRuleError()
+        assertNull(vm.state.first { it.ruleError == null }.ruleError)
     }
 
     @Test

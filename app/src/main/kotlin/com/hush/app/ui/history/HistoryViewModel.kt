@@ -6,8 +6,16 @@ import com.hush.app.db.AppSummary
 import com.hush.app.db.ChatSummary
 import com.hush.app.db.NotificationEvent
 import com.hush.app.db.NotificationRepository
+import com.hush.app.focus.ChatRule
+import com.hush.app.focus.FocusActions
+import com.hush.app.focus.appThrottleMinutes
+import com.hush.app.focus.chatRule
+import com.hush.app.focus.withChatRule
+import com.hush.app.focus.withoutChatRule
 import com.hush.app.open.NotificationOpener
 import com.hush.app.open.OpenResult
+import com.hush.app.settings.Settings
+import com.hush.app.settings.SettingsStore
 import com.hush.app.ui.components.SystemStatus
 import com.hush.app.ui.components.UiSignals
 import com.hush.app.ui.components.dayOf
@@ -15,6 +23,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.LocalDate
 import java.time.ZoneId
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.Flow
@@ -31,6 +40,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 
 sealed interface HistoryMode {
     /**
@@ -39,7 +49,10 @@ sealed interface HistoryMode {
      */
     data class Browse(val query: String = "", val app: String? = null, val chat: String? = null) : HistoryMode
 
-    /** The digest deep link: only the held rows delivered at [deliveredAt]. */
+    /**
+     * The digest deep link: the held rows delivered at or after [deliveredAt]. Normally that is one
+     * delivery run; a digest that replaced an unread one carries the older run's time and covers both.
+     */
     data class HeldBatch(val deliveredAt: Long) : HistoryMode
 }
 
@@ -67,6 +80,23 @@ data class HistoryUiState(
     val canLoadMore: Boolean = false,
     /** Label of the app a tap could not open (uninstalled / no launcher), until dismissed. */
     val openFailure: String? = null,
+    /** The "Throttle this chat" dialog, while it is open. */
+    val chatThrottle: ChatThrottle? = null,
+    /** The real cause of a chat rule that could not be saved, until dismissed. */
+    val ruleError: String? = null,
+)
+
+/**
+ * What the chat-throttle dialog shows for one chat. [ruleMinutes] is the chat's own rule (null =
+ * none, it follows the app); [appMinutes] is what the app gives it (0 = the app is not held).
+ */
+data class ChatThrottle(
+    val packageName: String,
+    val chatKey: String,
+    val title: String,
+    val appLabel: String,
+    val ruleMinutes: Int?,
+    val appMinutes: Int,
 )
 
 /** Rows tagged with the mode they were loaded for, so the state never pairs a new mode with stale rows. */
@@ -81,7 +111,13 @@ private data class Paging(val mode: HistoryMode? = null, val showAll: Boolean = 
 
 private data class Filters(val app: String? = null, val chat: String? = null)
 
-private data class Local(val expandedId: String? = null, val listenerEnabled: Boolean, val openFailure: String? = null)
+private data class Local(
+    val expandedId: String? = null,
+    val listenerEnabled: Boolean,
+    val openFailure: String? = null,
+    val throttleFor: NotificationEvent? = null,
+    val ruleError: String? = null,
+)
 
 @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
 @HiltViewModel
@@ -90,6 +126,8 @@ class HistoryViewModel(
     private val systemStatus: SystemStatus,
     private val signals: UiSignals,
     private val opener: NotificationOpener,
+    private val settings: SettingsStore,
+    private val focusActions: FocusActions,
     private val zone: ZoneId,
     debounceMillis: Long,
 ) : ViewModel() {
@@ -100,7 +138,9 @@ class HistoryViewModel(
         systemStatus: SystemStatus,
         signals: UiSignals,
         opener: NotificationOpener,
-    ) : this(repo, systemStatus, signals, opener, ZoneId.systemDefault(), DEBOUNCE_MILLIS)
+        settings: SettingsStore,
+        focusActions: FocusActions,
+    ) : this(repo, systemStatus, signals, opener, settings, focusActions, ZoneId.systemDefault(), DEBOUNCE_MILLIS)
 
     private val _query = MutableStateFlow("")
 
@@ -130,7 +170,7 @@ class HistoryViewModel(
         .flatMapLatest { app -> if (app == null) flowOf(emptyList()) else repo.selectChats(app) }
 
     val state: StateFlow<HistoryUiState> =
-        combine(page, repo.selectApps(), chats, local) { page, apps, chats, loc ->
+        combine(page, repo.selectApps(), chats, local, settings.settings) { page, apps, chats, loc, s ->
             val more = page.rows.size < page.total
             HistoryUiState(
                 loading = false,
@@ -145,6 +185,8 @@ class HistoryViewModel(
                 collapsed = more && !page.showAll,
                 canLoadMore = more && page.showAll,
                 openFailure = loc.openFailure,
+                chatThrottle = loc.throttleFor?.let { chatThrottleOf(it, s) },
+                ruleError = loc.ruleError,
             )
             // The initial value is the loading state; after that the last state stays up until fresh rows arrive.
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HistoryUiState())
@@ -230,6 +272,50 @@ class HistoryViewModel(
 
     fun dismissOpenFailure() {
         local.update { it.copy(openFailure = null) }
+    }
+
+    private fun chatThrottleOf(event: NotificationEvent, s: Settings): ChatThrottle? {
+        val key = event.chatKey ?: return null
+        return ChatThrottle(
+            packageName = event.packageName,
+            chatKey = key,
+            title = event.conversationTitle?.takeIf { it.isNotBlank() } ?: event.title?.takeIf { it.isNotBlank() } ?: key,
+            appLabel = event.appLabel?.takeIf { it.isNotBlank() } ?: event.packageName,
+            ruleMinutes = s.chatRule(event.packageName, key)?.minutes,
+            appMinutes = s.appThrottleMinutes(event.packageName),
+        )
+    }
+
+    /** "Throttle this chat" on a row: opens the dialog for the row's chat. */
+    fun askChatThrottle(event: NotificationEvent) {
+        if (event.chatKey != null) local.update { it.copy(throttleFor = event) }
+    }
+
+    fun dismissChatThrottle() {
+        local.update { it.copy(throttleFor = null) }
+    }
+
+    /** Applies the dialog's choice: an interval, [com.hush.app.focus.INSTANT] (never held), or null = no rule, follow the app. */
+    fun setChatThrottle(minutes: Int?) {
+        val dialog = state.value.chatThrottle ?: return
+        local.update { it.copy(throttleFor = null) }
+        viewModelScope.launch {
+            try {
+                focusActions.updateRules { s ->
+                    if (minutes == null) s.withoutChatRule(dialog.packageName, dialog.chatKey)
+                    else s.withChatRule(ChatRule(dialog.packageName, dialog.chatKey, dialog.title, minutes))
+                }
+                local.update { it.copy(ruleError = null) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                local.update { it.copy(ruleError = e.message ?: e.javaClass.simpleName) }
+            }
+        }
+    }
+
+    fun dismissRuleError() {
+        local.update { it.copy(ruleError = null) }
     }
 
     /** Leaves the digest batch view ("All history" or navigating away). */

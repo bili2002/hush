@@ -2,6 +2,12 @@ package com.hush.app.ui.focus
 
 import com.hush.app.db.NotificationRepository
 import com.hush.app.focus.DeliverResult
+import com.hush.app.focus.CategoryGroup
+import com.hush.app.focus.ChatRule
+import com.hush.app.focus.FocusCategory
+import com.hush.app.focus.FocusRules
+import com.hush.app.focus.HeldApp
+import com.hush.app.focus.INSTANT
 import com.hush.app.settings.Settings
 import com.hush.app.testing.FakeFocusActions
 import com.hush.app.testing.FakeSettingsStore
@@ -232,17 +238,51 @@ class FocusViewModelTest {
     }
 
     @Test
-    fun `toggle and slot go through FocusActions and persist`() = runTest {
+    fun `toggle goes through FocusActions and persists`() = runTest {
         val settings = FakeSettingsStore(Settings(holdPackages = setOf("com.example.alpha")))
         val vm = vm(settings)
         vm.loaded()
 
         vm.setEnabled(true)
-        vm.setSlotMinutes(30)
 
-        val s = vm.state.first { it.enabled && it.slotMinutes == 30 }
-        assertTrue(s.enabled)
-        assertEquals(30, settings.state.value.slotMinutes)
+        assertTrue(vm.state.first { it.enabled }.enabled)
+        assertTrue(settings.state.value.focusEnabled)
+    }
+
+    @Test
+    fun `next digest follows the held rows' own intervals`() = runTest {
+        // alpha is in a 15-minute group, beta uses the 60-minute default. Now is 13:17.
+        val settings = FakeSettingsStore(
+            Settings(
+                focusEnabled = true,
+                slotMinutes = 60,
+                holdPackages = setOf("com.example.alpha", "com.example.beta"),
+                rules = FocusRules(categories = listOf(FocusCategory("fast", "Fast", 15)), appCategory = mapOf("com.example.alpha" to "fast")),
+            ),
+        )
+        val vm = vm(settings)
+        assertEquals(at("2024-01-10T13:30:00Z"), vm.loaded().nextSlotAt, "nothing held: the next alarm, i.e. the shortest interval's boundary")
+
+        repo.insert(event("b1", packageName = "com.example.beta", postTime = at("2024-01-10T13:10:00Z"), held = true))
+        assertEquals(at("2024-01-10T14:00:00Z"), vm.state.first { it.heldCount == 1L }.nextSlotAt, "the only held row waits for the hour")
+
+        repo.insert(event("a1", packageName = "com.example.alpha", postTime = at("2024-01-10T13:16:00Z"), held = true))
+        assertEquals(at("2024-01-10T13:30:00Z"), vm.state.first { it.heldCount == 2L }.nextSlotAt, "the 15-minute row comes first")
+
+        repo.insert(event("a0", packageName = "com.example.alpha", postTime = at("2024-01-10T12:50:00Z"), held = true))
+        assertEquals(at("2024-01-10T13:30:00Z"), vm.state.first { it.heldCount == 3L }.nextSlotAt, "an overdue row goes out with the next alarm")
+    }
+
+    @Test
+    fun `gate looks at what would actually be held, not at the hold list alone`() = runTest {
+        val instantOnly = Settings(
+            holdPackages = setOf("com.example.alpha"),
+            rules = FocusRules(categories = listOf(FocusCategory("off", "Off", INSTANT)), appCategory = mapOf("com.example.alpha" to "off")),
+        )
+        assertEquals(listOf(GateReason.EMPTY_HOLD_LIST), vm(FakeSettingsStore(instantOnly)).loaded().gateReasons)
+
+        val chatOnly = Settings(rules = FocusRules(chatRules = listOf(ChatRule("com.example.alpha", "c1", "Group one", 60))))
+        assertTrue(vm(FakeSettingsStore(chatOnly)).loaded().gateReasons.isEmpty(), "a holding chat rule is enough")
     }
 
     @Test
@@ -262,13 +302,44 @@ class FocusViewModelTest {
     }
 
     @Test
-    fun `lastFocusError and hold labels pass through`() = runTest {
+    fun `lastFocusError and the rule summary pass through`() = runTest {
         val s = vm(
-            FakeSettingsStore(Settings(holdPackages = setOf("com.example.beta", "com.example.alpha"), lastFocusError = "boom")),
+            FakeSettingsStore(
+                Settings(
+                    slotMinutes = 60,
+                    holdPackages = setOf("com.example.beta", "com.example.alpha", "com.example.gamma"),
+                    lastFocusError = "boom",
+                    rules = FocusRules(
+                        categories = listOf(FocusCategory("fast", "Fast", 15), FocusCategory("empty", "Empty", 30)),
+                        appCategory = mapOf("com.example.gamma" to "fast"),
+                        chatRules = listOf(ChatRule("com.example.alpha", "c1", "Group one", 240)),
+                    ),
+                ),
+            ),
         ).loaded()
 
         assertEquals("boom", s.lastFocusError)
-        assertEquals(listOf("Alpha", "Beta"), s.holdLabels)
+        assertEquals(
+            listOf(
+                CategoryGroup("fast", "Fast", 15, 15, listOf(HeldApp("com.example.gamma", "Gamma"))),
+                CategoryGroup(null, null, null, 60, listOf(HeldApp("com.example.alpha", "Alpha"), HeldApp("com.example.beta", "Beta"))),
+            ),
+            s.groups,
+            "empty groups are left out of the summary",
+        )
+        assertEquals(1, s.chatRuleCount)
+    }
+
+    @Test
+    fun `manageRules asks the shell to open Apps and throttles`() = runTest {
+        var route: String? = null
+        val job = launch(start = CoroutineStart.UNDISPATCHED) { signals.navigate.collect { route = it } }
+
+        vm().manageRules()
+        runCurrent()
+
+        assertEquals("focus/rules", route)
+        job.cancel()
     }
 
     @Test

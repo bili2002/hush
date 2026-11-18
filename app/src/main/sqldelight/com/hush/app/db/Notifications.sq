@@ -101,9 +101,11 @@ ORDER BY post_time ASC;
 markDelivered:
 UPDATE notification_event SET delivered_at = :ts WHERE id IN :ids;
 
+-- Everything a digest covers: held rows delivered at or after its `since` (a digest that replaced
+-- an unread one keeps the older one's `since`, so the range can span several delivery runs).
 selectHeldBatch:
 SELECT * FROM notification_event
-WHERE held = 1 AND delivered_at = :deliveredAt
+WHERE held = 1 AND delivered_at >= :since
 ORDER BY post_time ASC;
 
 -- Retention: never deletes an unsynced row or a held row that has not been delivered yet.

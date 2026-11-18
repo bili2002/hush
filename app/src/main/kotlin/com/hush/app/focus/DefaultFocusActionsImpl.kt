@@ -3,6 +3,7 @@ package com.hush.app.focus
 import android.content.Context
 import com.hush.app.R
 import com.hush.app.db.NotificationRepository
+import com.hush.app.settings.Settings
 import com.hush.app.settings.SettingsStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.time.Clock
@@ -20,7 +21,7 @@ class DefaultFocusActionsImpl @Inject constructor(
 
     override suspend fun setEnabled(enabled: Boolean) {
         if (enabled) {
-            if (settings.current().holdPackages.isEmpty()) {
+            if (!settings.current().holdsAnything) {
                 val error = ctx.getString(R.string.focus_error_no_hold_apps)
                 settings.update { it.copy(focusEnabled = false, lastFocusError = error) }
                 return
@@ -42,8 +43,13 @@ class DefaultFocusActionsImpl @Inject constructor(
 
     override suspend fun setSlotMinutes(minutes: Int) {
         require(minutes > 0) { "slotMinutes must be positive, was $minutes" }
-        settings.update { it.copy(slotMinutes = minutes) }
-        if (settings.current().focusEnabled) scheduler.schedule(clock.millis())
+        updateRules { it.copy(slotMinutes = minutes) }
+    }
+
+    override suspend fun updateRules(edit: (Settings) -> Settings) {
+        settings.update(edit)
+        // Non-forced: delivers only what the new rules make due, and re-arms the alarm on its way out.
+        if (settings.current().focusEnabled) deliverer.deliverDue()
     }
 
     override suspend fun deliverNow(): DeliverResult = deliverer.deliverDue(force = true)

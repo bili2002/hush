@@ -5,9 +5,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hush.app.db.AppSummary
 import com.hush.app.db.NotificationRepository
+import com.hush.app.focus.suggestedCategory
+import com.hush.app.focus.withHeldApp
+import com.hush.app.focus.withoutHeldApp
 import com.hush.app.settings.Settings
 import com.hush.app.settings.SettingsStore
 import com.hush.app.ui.Routes
+import com.hush.app.ui.components.AppCategoryResolver
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlin.coroutines.cancellation.CancellationException
@@ -65,6 +69,7 @@ class AppPickerViewModel @Inject constructor(
     private val appsSource: InstalledAppsSource,
     repository: NotificationRepository,
     private val settingsStore: SettingsStore,
+    private val categories: AppCategoryResolver,
 ) : ViewModel() {
 
     val list: PickerList = PickerList.from(savedStateHandle[Routes.ARG_LIST])
@@ -107,11 +112,15 @@ class AppPickerViewModel @Inject constructor(
     /** Persists immediately; the row order follows from the store update. */
     fun setChecked(packageName: String, checked: Boolean) {
         viewModelScope.launch {
+            // Looked up outside the store's transform: a PackageManager call has no business inside a DataStore edit.
+            val osCategory = if (list == PickerList.HOLD && checked) categories.osCategory(packageName) else null
             settingsStore.update { s ->
-                val next = if (checked) list.selectedIn(s) + packageName else list.selectedIn(s) - packageName
                 when (list) {
-                    PickerList.HOLD -> s.copy(holdPackages = next)
-                    PickerList.EXCLUDED -> s.copy(excludedPackages = next)
+                    // A newly held app lands in the preset it most likely belongs to; un-holding forgets its category.
+                    PickerList.HOLD ->
+                        if (checked) s.withHeldApp(packageName, s.suggestedCategory(packageName, osCategory)) else s.withoutHeldApp(packageName)
+                    PickerList.EXCLUDED ->
+                        s.copy(excludedPackages = if (checked) s.excludedPackages + packageName else s.excludedPackages - packageName)
                 }
             }
         }

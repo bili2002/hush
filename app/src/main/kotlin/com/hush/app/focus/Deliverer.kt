@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Bundle
 import android.text.format.DateFormat
 import com.hush.app.R
 import com.hush.app.db.NotificationEvent
@@ -24,9 +25,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
- * Owns the HELD → DELIVERED transition: selects held-undelivered rows, posts ONE digest
- * notification, marks the rows delivered with the same timestamp the digest carries, and re-arms
- * the slot alarm. Callers: the slot alarm ([DeliveryReceiver]), boot/time-change
+ * Owns the HELD → DELIVERED transition: selects the held-undelivered rows that are due, posts ONE
+ * digest notification, marks those rows delivered, and re-arms the slot alarm. Callers: the slot alarm ([DeliveryReceiver]), boot/time-change
  * ([RescheduleReceiver]), the UI ([DefaultFocusActionsImpl]) and the Sync worker's periodic
  * safety net. All of them can overlap, hence the [Mutex].
  */
@@ -42,14 +42,18 @@ class Deliverer @Inject constructor(
     private val notificationManager get() = ctx.getSystemService(NotificationManager::class.java)
 
     /**
-     * Delivers held rows as one digest when they are due (or always, when [force]).
+     * Delivers the held rows that are due as one digest (or every held row, when [force]).
      *
-     * Non-forced "due" = at least one held row has had a slot boundary pass since it was posted,
-     * or is older than the max-age guard. When anything is due, every held row goes into the one
-     * digest, so a straggler posted between the boundary and a late alarm is not left waiting a
-     * whole extra slot. Rows are selected regardless of the current hold list: a package removed
-     * from the hold list while it had held rows still gets them delivered on the next run, and so
-     * does anything held while Focus was later switched off. Nothing is ever dropped.
+     * "Due" is decided per row with that row's own interval ([throttleMinutes] under the current
+     * rules): a slot boundary of its interval has passed since it was posted, or it is older than
+     * the max-age guard, or the rules no longer hold it at all (its app left the hold list, its
+     * category or chat was set to instant). Rows that are not due stay held, so a short interval's
+     * digest never drags a longer interval's rows along. Nothing is ever dropped: whatever the
+     * rules become, a held row is due at the latest after [maxAgeMillis].
+     *
+     * If the previous digest is still sitting unread in the shade, the new one replaces it (same
+     * notification id) but also lists the previous one's rows and links to all of them, so a
+     * frequent small digest cannot bury a bigger one the owner has not looked at yet.
      *
      * The alarm is one-shot, so it is re-armed on every exit path while Focus is enabled, and also
      * while anything is still held (Focus off but delivery blocked), so the next slot retries.
@@ -62,9 +66,9 @@ class Deliverer @Inject constructor(
             val rows = repo.selectHeldUndelivered()
             if (rows.isEmpty()) return@withLock DeliverResult(0)
             stillHeld = true
-            if (!force && rows.none { isDue(it.postTime, now, current.slotMinutes, ZoneId.systemDefault()) }) {
-                return@withLock DeliverResult(0)
-            }
+            val zone = ZoneId.systemDefault()
+            val due = if (force) rows else rows.filter { isDue(it.postTime, now, current.throttleMinutes(it.packageName, it.chatKey), zone) }
+            if (due.isEmpty()) return@withLock DeliverResult(0)
 
             ensureChannel()
             if (!canPost()) {
@@ -73,18 +77,32 @@ class Deliverer @Inject constructor(
                 return@withLock DeliverResult(0, error)
             }
 
+            val since = unreadDigestSince()?.takeIf { it < now } ?: now
+            val shown = if (since < now) repo.selectHeldBatch(since) + due else due
+
             // Once the digest is on screen the rows must be stamped delivered, even if the caller
             // (receiver, worker, UI scope) is cancelled mid-way; otherwise the next run re-posts them.
             withContext(NonCancellable) {
-                notificationManager.notify(DIGEST_NOTIFICATION_ID, buildDigest(rows, deliveredAt = now))
-                repo.markDelivered(rows.map { it.id }, now)
+                notificationManager.notify(DIGEST_NOTIFICATION_ID, buildDigest(shown, coversSince = since))
+                repo.markDelivered(due.map { it.id }, now)
                 if (current.lastFocusError != null) settings.update { it.copy(lastFocusError = null) }
             }
-            stillHeld = false
-            DeliverResult(rows.size)
+            stillHeld = due.size < rows.size
+            DeliverResult(due.size)
         } finally {
             if (current.focusEnabled || stillHeld) scheduler.schedule(now)
         }
+    }
+
+    /** The `since` of the digest still showing in the shade, or null when there is none (tapped, swiped, never posted). */
+    private fun unreadDigestSince(): Long? = try {
+        notificationManager.activeNotifications
+            .firstOrNull { it.id == DIGEST_NOTIFICATION_ID }
+            ?.notification?.extras?.getLong(EXTRA_SINCE, 0L)
+            ?.takeIf { it > 0L }
+    } catch (e: RuntimeException) {
+        // A binder hiccup only costs the carry-over; the rows are in History either way.
+        null
     }
 
     private fun canPost(): Boolean {
@@ -106,7 +124,8 @@ class Deliverer @Inject constructor(
         nm.createNotificationChannel(channel)
     }
 
-    private fun buildDigest(rows: List<NotificationEvent>, deliveredAt: Long): Notification {
+    /** [coversSince] = the delivery time of the oldest batch this digest covers; History shows every held row delivered from then on. */
+    private fun buildDigest(rows: List<NotificationEvent>, coversSince: Long): Notification {
         val count = rows.size
         val title = ctx.resources.getQuantityString(R.plurals.focus_digest_title, count, count)
 
@@ -122,7 +141,7 @@ class Deliverer @Inject constructor(
         val open = Intent(ctx, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             .putExtra(MainActivity.EXTRA_FILTER, MainActivity.FILTER_HELD)
-            .putExtra(MainActivity.EXTRA_DELIVERED_AT, deliveredAt)
+            .putExtra(MainActivity.EXTRA_DELIVERED_AT, coversSince)
         val contentIntent = PendingIntent.getActivity(
             ctx,
             OPEN_REQUEST_CODE,
@@ -136,6 +155,7 @@ class Deliverer @Inject constructor(
             .setContentText(text)
             .setStyle(Notification.BigTextStyle().bigText(lines.joinToString("\n")))
             .setContentIntent(contentIntent)
+            .addExtras(Bundle().apply { putLong(EXTRA_SINCE, coversSince) })
             .setWhen(oldest)
             .setShowWhen(true)
             .setAutoCancel(true)
@@ -160,22 +180,29 @@ class Deliverer @Inject constructor(
         /** Fixed id: the newest digest replaces the previous one in the shade; History keeps them all. */
         const val DIGEST_NOTIFICATION_ID = 4002
         private const val OPEN_REQUEST_CODE = 4003
+        private const val EXTRA_SINCE = "com.hush.app.digest.SINCE"
         private const val MAX_BIG_TEXT_LINES = 6
         private val whitespace = Regex("\\s+")
 
         /** Max age after which a held row is delivered regardless of schedule. */
-        fun maxAgeMillis(slotMinutes: Int): Long = maxOf(2L * slotMinutes, 120L) * 60_000L
+        fun maxAgeMillis(minutes: Int): Long = maxOf(2L * minutes, 120L) * 60_000L
 
         /**
-         * A row is due once a slot boundary has passed since it was posted, once it is older than
-         * [maxAgeMillis], or when its post time is in the future (the clock was set back since it
-         * was held; waiting for "its" boundary could take hours). For a fixed zone the max-age
-         * clause is implied by the slot clause (maxAge ≥ 2 slots); it stays as an independent
-         * guard against zone changes and `nextSlot` edge cases.
+         * A row held for [minutes] is due once a slot boundary of that interval has passed since it
+         * was posted, once it is older than [maxAgeMillis], when the rules no longer hold it
+         * ([minutes] is [INSTANT]), or when its post time is in the future (the clock was set back
+         * since it was held; waiting for "its" boundary could take hours). For a fixed zone the
+         * max-age clause is implied by the slot clause (maxAge ≥ 2 slots); it stays as an
+         * independent guard against zone changes and `nextSlot` edge cases.
          */
-        fun isDue(postTime: Long, now: Long, slotMinutes: Int, zone: ZoneId): Boolean =
-            postTime > now ||
-                nextSlot(postTime, slotMinutes, zone) <= now ||
-                now - postTime >= maxAgeMillis(slotMinutes)
+        fun isDue(postTime: Long, now: Long, minutes: Int, zone: ZoneId): Boolean =
+            minutes <= INSTANT ||
+                postTime > now ||
+                nextSlot(postTime, minutes, zone) <= now ||
+                now - postTime >= maxAgeMillis(minutes)
+
+        /** When a row held for [minutes] becomes due: its interval's next boundary, capped by the max age. */
+        fun dueAt(postTime: Long, minutes: Int, zone: ZoneId): Long =
+            if (minutes <= INSTANT) postTime else minOf(nextSlot(postTime, minutes, zone), postTime + maxAgeMillis(minutes))
     }
 }

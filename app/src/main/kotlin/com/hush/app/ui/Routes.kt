@@ -5,6 +5,9 @@ object Routes {
     const val FOCUS = "focus"
     const val SETTINGS = "settings"
 
+    /** "Apps & throttles": categories, intervals and chat rules. */
+    const val FOCUS_RULES = "focus/rules"
+
     /** [list] is `"hold"` or `"excluded"`. */
     fun appPicker(list: String) = "apps/$list"
 

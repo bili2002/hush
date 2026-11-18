@@ -1,5 +1,6 @@
 package com.hush.app.settings
 
+import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -10,7 +11,10 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import com.hush.app.focus.FocusRules
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.Json
 
 interface SettingsStore {
     val settings: Flow<Settings>
@@ -32,6 +36,8 @@ data class Settings(
     val lastSyncError: String? = null,
     val lastFocusError: String? = null,
     val setupDone: Boolean = false,
+    /** Categories, per-category intervals and chat rules; see `focus/FocusRules.kt`. */
+    val rules: FocusRules = FocusRules(),
 )
 
 /** Preferences-DataStore backed [SettingsStore]. Absent keys read as [Settings] defaults. */
@@ -59,6 +65,21 @@ class DataStoreSettingsStore(private val dataStore: DataStore<Preferences>) : Se
         val lastSyncError = stringPreferencesKey("last_sync_error")
         val lastFocusError = stringPreferencesKey("last_focus_error")
         val setupDone = booleanPreferencesKey("setup_done")
+        val rules = stringPreferencesKey("focus_rules")
+    }
+
+    /** A blob this build cannot read (corrupt, or a shape from a newer build) means "no rules", never a crash. */
+    private fun decodeRules(raw: String?): FocusRules {
+        raw ?: return FocusRules()
+        return try {
+            json.decodeFromString(FocusRules.serializer(), raw)
+        } catch (e: SerializationException) {
+            Log.w(TAG, "focus rules unreadable, falling back to none: ${e.javaClass.simpleName}")
+            FocusRules()
+        } catch (e: IllegalArgumentException) {
+            Log.w(TAG, "focus rules unreadable, falling back to none: ${e.javaClass.simpleName}")
+            FocusRules()
+        }
     }
 
     private fun Preferences.toSettings(): Settings {
@@ -77,6 +98,7 @@ class DataStoreSettingsStore(private val dataStore: DataStore<Preferences>) : Se
             lastSyncError = this[Keys.lastSyncError],
             lastFocusError = this[Keys.lastFocusError],
             setupDone = this[Keys.setupDone] ?: d.setupDone,
+            rules = decodeRules(this[Keys.rules]),
         )
     }
 
@@ -94,9 +116,15 @@ class DataStoreSettingsStore(private val dataStore: DataStore<Preferences>) : Se
         setOrRemove(Keys.lastSyncError, s.lastSyncError)
         setOrRemove(Keys.lastFocusError, s.lastFocusError)
         this[Keys.setupDone] = s.setupDone
+        this[Keys.rules] = json.encodeToString(FocusRules.serializer(), s.rules)
     }
 
     private fun <T> androidx.datastore.preferences.core.MutablePreferences.setOrRemove(key: Preferences.Key<T>, value: T?) {
         if (value == null) remove(key) else this[key] = value
+    }
+
+    private companion object {
+        const val TAG = "HushSettings"
+        val json = Json { ignoreUnknownKeys = true }
     }
 }

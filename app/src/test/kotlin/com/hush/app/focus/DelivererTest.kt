@@ -156,11 +156,87 @@ class DelivererTest {
     }
 
     @Test
-    fun oneDueRowPullsTheStragglersIntoTheSameDigest() = runTest {
+    fun aRowStillInsideItsSlotStaysHeldWhenAnotherIsDue() = runTest {
         repo.insert(event("old", postTime = slotOpen - 60_000L, held = true))
         repo.insert(event("fresh", postTime = now - 1_000L, held = true))
-        assertEquals(DeliverResult(2), deliverer.deliverDue())
+        assertEquals(DeliverResult(1), deliverer.deliverDue())
         assertEquals(1, shadowOf(nm).allNotifications.size)
+        assertEquals(listOf("fresh"), repo.selectHeldUndelivered().map { it.id })
+        assertEquals(1, alarms.size, "the row left behind has its next attempt scheduled")
+    }
+
+    /** A second deliverer over the same DB, settings and notification manager, [minutes] later (22:13:20 + minutes). */
+    private fun delivererAt(minutes: Long): Deliverer {
+        val later = fixedClock(now + minutes * 60_000L)
+        return Deliverer(ctx, repo, settings, later, DeliveryScheduler(ctx, settings))
+    }
+
+    private fun fastAlpha() = focusOn.copy(
+        rules = FocusRules(categories = listOf(FocusCategory("fast", "Fast", 15)), appCategory = mapOf("com.example.alpha" to "fast")),
+    )
+
+    @Test
+    fun aShortIntervalDigestDoesNotDragALongerIntervalAlong() = runTest {
+        // alpha: 15-minute group, beta: the 60-minute default. Both posted at 22:05; it is now 22:20.
+        settings.update { fastAlpha() }
+        val posted = slotOpen + 5 * 60_000L
+        repo.insert(event("a1", packageName = "com.example.alpha", postTime = posted, held = true))
+        repo.insert(event("b1", packageName = "com.example.beta", postTime = posted, held = true))
+
+        assertEquals(DeliverResult(1), delivererAt(minutes = 7).deliverDue())
+
+        assertEquals(listOf("b1"), repo.selectHeldUndelivered().map { it.id })
+        assertEquals("1 held notification", shadowOf(nm).allNotifications.single().extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+        // Re-armed for the next 15-minute boundary (22:30), not the hour.
+        assertEquals(slotOpen + 30 * 60_000L, alarms.single().triggerAtTime)
+    }
+
+    @Test
+    fun aChatRuleOutranksTheAppsInterval() = runTest {
+        settings.update { fastAlpha().withChatRule(ChatRule("com.example.alpha", "c1", "Group one", 240)) }
+        val posted = slotOpen + 5 * 60_000L
+        repo.insert(event("slow", packageName = "com.example.alpha", postTime = posted, held = true, conversationId = "c1"))
+        repo.insert(event("fast", packageName = "com.example.alpha", postTime = posted, held = true, conversationId = "c2"))
+
+        assertEquals(DeliverResult(1), delivererAt(minutes = 7).deliverDue())
+        assertEquals(listOf("slow"), repo.selectHeldUndelivered().map { it.id })
+    }
+
+    @Test
+    fun aRowTheRulesNoLongerHoldIsReleasedOnTheNextRun() = runTest {
+        repo.insert(event("a1", packageName = "com.example.alpha", postTime = now - 1_000L, held = true, conversationId = "c1"))
+        assertEquals(DeliverResult(0), deliverer.deliverDue())
+
+        settings.update { it.withChatRule(ChatRule("com.example.alpha", "c1", "Group one", INSTANT)) }
+
+        assertEquals(DeliverResult(1), deliverer.deliverDue())
+        assertEquals(0, repo.selectHeldUndelivered().size)
+    }
+
+    @Test
+    fun aDigestThatReplacesAnUnreadOneStillCoversItsRows() = runTest {
+        settings.update { fastAlpha() }
+        seedPreviousSlot() // 3 alpha + 1 beta from 21:xx, all due at 22:13:20
+        assertEquals(DeliverResult(4), deliverer.deliverDue())
+
+        // 22:35: a new alpha row posted at 22:20 is due (boundary 22:30). The first digest was never opened.
+        repo.insert(event("a9", packageName = "com.example.alpha", appLabel = "Alpha", postTime = now + 7 * 60_000L, held = true, title = "T9", text = null))
+        assertEquals(DeliverResult(1), delivererAt(minutes = 22).deliverDue(), "only the new row counts as delivered now")
+
+        val digest = shadowOf(nm).allNotifications.single()
+        assertEquals("5 held notifications", digest.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+        assertEquals("Alpha 4 · Beta 1", digest.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+        assertEquals(now, shadowOf(digest.contentIntent).savedIntent.getLongExtra(MainActivity.EXTRA_DELIVERED_AT, -1), "links back to the first unread batch")
+        assertEquals(5, repo.selectHeldBatch(now).size)
+
+        // The owner dismisses it; the next digest stands alone again.
+        nm.cancel(Deliverer.DIGEST_NOTIFICATION_ID)
+        repo.insert(event("a10", packageName = "com.example.alpha", appLabel = "Alpha", postTime = now + 25 * 60_000L, held = true))
+        val third = now + 37 * 60_000L
+        assertEquals(DeliverResult(1), delivererAt(minutes = 37).deliverDue())
+        val fresh = shadowOf(nm).allNotifications.single()
+        assertEquals("1 held notification", fresh.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+        assertEquals(third, shadowOf(fresh.contentIntent).savedIntent.getLongExtra(MainActivity.EXTRA_DELIVERED_AT, -1))
     }
 
     @Test
@@ -181,6 +257,10 @@ class DelivererTest {
         assertEquals(120 * 60_000L, Deliverer.maxAgeMillis(15))
         assertEquals(120 * 60_000L, Deliverer.maxAgeMillis(60))
         assertEquals(240 * 60_000L, Deliverer.maxAgeMillis(120))
+        assertTrue(Deliverer.isDue(now - 1, now, INSTANT, utc), "the rules no longer hold it: due at once")
+        assertEquals(slotOpen + 60 * 60_000L, Deliverer.dueAt(slotOpen + 1, 60, utc), "due at its interval's next boundary")
+        assertEquals(slotOpen + 15 * 60_000L, Deliverer.dueAt(slotOpen + 1, 15, utc))
+        assertEquals(now, Deliverer.dueAt(now, INSTANT, utc))
     }
 
     @Test

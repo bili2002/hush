@@ -1,6 +1,7 @@
 package com.hush.app.db
 
 import com.hush.app.testing.event
+import com.hush.app.testing.mutedIds
 import com.hush.app.testing.testRepository
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -77,19 +78,40 @@ class NotificationRepositoryTest {
         repo.insert(event("p", postTime = 50))
         repo.markDelivered(listOf("d"), deliveredAt = 1_000)
 
-        assertEquals(listOf("m1", "m2"), repo.selectMuted().map { it.id })
+        assertEquals(listOf("m1", "m2"), repo.mutedIds())
         assertEquals(2L, repo.countMuted().first())
+        assertEquals(
+            setOf("com.example.alpha" to "title m1", "com.example.beta" to "title m2"),
+            repo.selectMutedChats().toSet(),
+        )
         assertEquals(listOf("m2", "m1"), repo.selectHistory("", null, null, 10, mutedOnly = true).first().map { it.id })
         assertEquals(listOf("m2"), repo.selectHistory("", "com.example.beta", null, 10, mutedOnly = true).first().map { it.id })
         assertEquals(2L, repo.countHistory("", null, null, mutedOnly = true).first())
         assertEquals(5L, repo.countHistory("", null, null).first())
 
-        repo.unmute(listOf("m1", "d", "p", "h"))
+        repo.unmuteChat("com.example.alpha", "title m1")
+        // The delivered row's and the plain row's chats: nothing muted there, so nothing changes.
+        repo.unmuteChat("com.example.alpha", "title d")
+        repo.unmuteChat("com.example.alpha", "title p")
 
         assertEquals(listOf("m1", "h"), repo.selectHeldUndelivered().map { it.id }, "the muted row waits for a digest again")
-        assertEquals(listOf("m2"), repo.selectMuted().map { it.id })
+        assertEquals(listOf("m2"), repo.mutedIds())
         assertEquals(listOf("d"), repo.selectHeldBatch(1_000).map { it.id }, "a delivered row is never reopened")
-        repo.unmute(emptyList()) // no-op, must not throw
+    }
+
+    @Test
+    fun `muted chats are listed once each, a row without title or conversation as the app's keyless chat`() = runTest {
+        repo.insert(event("a1", held = true, postTime = 1, conversationId = "c1"), muted = true)
+        repo.insert(event("a2", held = true, postTime = 2, conversationId = "c1", title = "another title"), muted = true)
+        repo.insert(event("k1", held = true, postTime = 3, title = null), muted = true)
+        repo.insert(event("k2", held = true, postTime = 4, title = ""), muted = true)
+
+        assertEquals(setOf("com.example.alpha" to "c1", "com.example.alpha" to null), repo.selectMutedChats().toSet())
+        assertEquals(2, repo.selectMutedChats().size)
+
+        repo.unmuteChat("com.example.alpha", null)
+        assertEquals(listOf("a1", "a2"), repo.mutedIds())
+        assertEquals(listOf("k1", "k2"), repo.selectHeldUndelivered().map { it.id })
     }
 
     @Test

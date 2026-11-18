@@ -179,7 +179,8 @@ fun HistoryContent(
                 FilterBar(
                     // Offered while something is muted, and kept while it is on so that it can be switched off.
                     muted = browse.muted.takeIf { it || state.mutedCount > 0 },
-                    mutedCount = state.mutedCount,
+                    // The count is of everything muted; next to another filter it would promise more than the list shows.
+                    mutedCount = state.mutedCount.takeIf { browse.app == null && browse.query.isEmpty() },
                     onMuted = callbacks.onMutedFilter,
                     app = browse.app,
                     appLabel = appLabel,
@@ -297,7 +298,8 @@ private fun SearchBar(query: String, onQueryChange: (String) -> Unit) {
 private fun FilterBar(
     /** Null = the "Muted" chip is not shown. */
     muted: Boolean?,
-    mutedCount: Int,
+    /** Null = show the chip without a number. */
+    mutedCount: Int?,
     onMuted: (Boolean) -> Unit,
     app: String?,
     appLabel: String?,
@@ -336,7 +338,7 @@ private fun FilterBar(
             FilterChip(
                 selected = muted,
                 onClick = { onMuted(!muted) },
-                label = { Text(stringResource(R.string.history_muted_count, mutedCount)) },
+                label = { Text(mutedCount?.let { stringResource(R.string.history_muted_count, it) } ?: stringResource(R.string.history_muted)) },
             )
         }
     }

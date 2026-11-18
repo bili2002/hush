@@ -11,7 +11,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -39,8 +39,9 @@ data class ChatThrottle(
  */
 @Composable
 fun ChatThrottleDialog(dialog: ChatThrottle, onPick: (Int?) -> Unit, onDismiss: () -> Unit) {
-    // "Custom…" swaps this dialog for the entry dialog; cancelling that comes back to the list.
-    var custom by rememberSaveable { mutableStateOf(false) }
+    // "Custom…" swaps this dialog for the entry dialog; cancelling that comes back to the list. Keyed by the
+    // chat and not saved across process death: the next chat's dialog must never open on someone else's entry.
+    var custom by remember(dialog.packageName, dialog.chatKey) { mutableStateOf(false) }
     if (custom) {
         CustomThrottleDialog(initial = dialog.ruleMinutes, onConfirm = onPick, onDismiss = { custom = false })
         return

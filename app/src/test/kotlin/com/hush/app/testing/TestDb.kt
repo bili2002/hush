@@ -6,6 +6,7 @@ import com.hush.app.db.HushDatabase
 import com.hush.app.db.NotificationEvent
 import com.hush.app.db.NotificationRepository
 import java.time.Clock
+import kotlinx.coroutines.flow.first
 
 /** Fresh in-memory database with the schema applied. */
 fun testDatabase(): HushDatabase {
@@ -52,3 +53,7 @@ fun event(
     conversationId = conversationId,
     conversationTitle = conversationTitle,
 )
+
+/** Ids of the rows that are muted right now, oldest first. */
+suspend fun NotificationRepository.mutedIds(): List<String> =
+    selectHistory("", null, null, limit = 10_000, mutedOnly = true).first().map { it.id }.reversed()

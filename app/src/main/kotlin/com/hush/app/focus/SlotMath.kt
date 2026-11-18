@@ -15,8 +15,12 @@ import java.time.ZonedDateTime
  */
 fun nextSlot(nowMillis: Long, slotMinutes: Int, zone: ZoneId): Long {
     require(slotMinutes > 0) { "slotMinutes must be positive, was $slotMinutes" }
-    var candidate: LocalDateTime = Instant.ofEpochMilli(nowMillis).atZone(zone).toLocalDate().atStartOfDay()
-    var best = Long.MAX_VALUE
+    val today = Instant.ofEpochMilli(nowMillis).atZone(zone).toLocalDate()
+    var candidate: LocalDateTime = today.atStartOfDay()
+    // Local midnight is always a boundary. For an interval that divides the day it is one anyway; for one
+    // that does not (a custom 100 or 1000 minutes) it is where the grid restarts, so that a boundary computed
+    // before midnight and one computed after it are on the same grid.
+    var best = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli().takeIf { it > nowMillis } ?: Long.MAX_VALUE
     while (true) {
         candidate = candidate.plusMinutes(slotMinutes.toLong())
         val earlier = ZonedDateTime.of(candidate, zone) // earlier offset in an overlap; shifted forward in a gap

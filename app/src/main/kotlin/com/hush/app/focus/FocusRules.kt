@@ -5,7 +5,7 @@ import kotlinx.serialization.Serializable
 
 /**
  * A named group of held apps with its own digest interval. [minutes]: null = use the default
- * interval ([Settings.slotMinutes]), [INSTANT] = do not hold, [MUTED] = hide and never deliver,
+ * interval ([Settings.slotMinutes]), [INSTANT] = do not hold, [MUTED] = hide and keep out of digests,
  * otherwise the interval in minutes.
  */
 @Serializable
@@ -73,7 +73,7 @@ fun Settings.appThrottleMinutes(packageName: String): Int =
 
 /**
  * How long a notification of [packageName] in chat [chatKey] is held: chat rule → app category →
- * default. [INSTANT] means it is not held at all, [MUTED] that it is hidden for good. Whether Focus
+ * default. [INSTANT] means it is not held at all, [MUTED] that it is hidden and in no digest. Whether Focus
  * is on is the caller's business.
  */
 fun Settings.throttleMinutes(packageName: String, chatKey: String?): Int =

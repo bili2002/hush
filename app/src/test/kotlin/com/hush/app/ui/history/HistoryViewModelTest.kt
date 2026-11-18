@@ -79,7 +79,7 @@ class HistoryViewModelTest {
         vm.setAppFilter("com.example.alpha")
         assertEquals(listOf("m1"), vm.state.first { (it.mode as? HistoryMode.Browse)?.app == "com.example.alpha" }.ids())
 
-        repo.unmute(listOf("m1"))
+        repo.unmuteChat("com.example.alpha", "title m1")
         val emptied = vm.state.first { it.mutedCount == 1 && it.days.isEmpty() }
         assertEquals(EmptyKind.APP_EMPTY, emptied.empty)
 
@@ -104,6 +104,25 @@ class HistoryViewModelTest {
         assertEquals(listOf("m"), s.ids())
         assertNull(signals.digestLink.value)
         assertEquals(false, signals.showMuted.value, "taken once")
+    }
+
+    @Test
+    fun `a request made before History was ever opened is honoured, and it clears a search`() = runTest {
+        repo.insert(event("m", postTime = 10, held = true, title = "quiet one"), muted = true)
+        repo.insert(event("p", postTime = 20, title = "needle"))
+        // Focus is the start screen: the request usually exists before this ViewModel does.
+        signals.showMuted.value = true
+        val fresh = vm()
+        assertEquals(listOf("m"), fresh.state.first { (it.mode as? HistoryMode.Browse)?.muted == true }.ids())
+
+        fresh.setMutedFilter(false)
+        fresh.setQuery("needle")
+        assertEquals(listOf("p"), fresh.state.first { (it.mode as? HistoryMode.Browse)?.query == "needle" }.ids())
+
+        signals.showMuted.value = true
+        val s = fresh.state.first { it.mode == HistoryMode.Browse(muted = true) }
+        assertEquals(listOf("m"), s.ids())
+        assertEquals("", fresh.query.value)
     }
 
     @Test

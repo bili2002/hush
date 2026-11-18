@@ -106,19 +106,24 @@ UPDATE notification_event SET delivered_at = :ts WHERE id IN :ids;
 
 -- Muted rows: hidden by a "Muted" rule and written already closed, with the delivery stamp 0
 -- (NotificationEvent.MUTED_AT). They stay like this for as long as their rule says "Muted".
-selectMuted:
-SELECT * FROM notification_event
-WHERE held = 1 AND delivered_at = 0
-ORDER BY post_time ASC;
+-- Which chats have anything muted: one row per (app, chat key), however many notifications
+-- that is. '' stands for "no chat key" (NotificationEvent.chatKey is null for null and for '').
+selectMutedChats:
+SELECT DISTINCT package_name, COALESCE(conversation_id, title, '') AS chat_key
+FROM notification_event
+WHERE held = 1 AND delivered_at = 0;
 
 countMuted:
 SELECT COUNT(*) FROM notification_event
 WHERE held = 1 AND delivered_at = 0 AND event = 'POSTED';
 
--- Turns muted rows back into ordinary held rows. Guarded, so it can never reopen a row that was delivered.
-unmute:
+-- Turns one chat's muted rows back into ordinary held rows. Guarded on the muted stamp, so it can
+-- never reopen a row that was delivered. `:chatKey` as in selectMutedChats ('' = no chat key).
+unmuteChat:
 UPDATE notification_event SET delivered_at = NULL
-WHERE held = 1 AND delivered_at = 0 AND id IN :ids;
+WHERE held = 1 AND delivered_at = 0
+  AND package_name = :packageName
+  AND COALESCE(conversation_id, title, '') = :chatKey;
 
 -- Everything a digest covers: held rows delivered at or after its `since` (a digest that replaced
 -- an unread one keeps the older one's `since`, so the range can span several delivery runs).

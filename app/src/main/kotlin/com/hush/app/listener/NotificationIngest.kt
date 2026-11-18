@@ -28,7 +28,7 @@ import kotlinx.coroutines.withContext
  * MUTE. If the insert throws we log and leave the notification visible (fail open).
  *
  * MUTE is HOLD whose row is written already closed ([com.hush.app.db.NotificationEvent.MUTED_AT]), in the one
- * insert: it never waits for a digest.
+ * insert: it is not waiting for a digest (the deliverer reopens it if its rule later stops being "Muted").
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @Singleton

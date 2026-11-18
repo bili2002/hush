@@ -20,13 +20,15 @@ import java.time.ZoneId
 import java.util.Date
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
- * Owns the HELD → DELIVERED transition: selects the held-undelivered rows that are due, posts ONE
+ * Owns the HELD → DELIVERED transition (and MUTED → HELD, when a muted row's rule stops being
+ * "Muted"): selects the held-undelivered rows that are due, posts ONE
  * digest notification, marks those rows delivered, and re-arms the alarm. Callers: the alarm ([DeliveryReceiver]), boot/time-change
  * ([RescheduleReceiver]), the UI ([DefaultFocusActionsImpl]) and the Sync worker's periodic
  * safety net. All of them can overlap, hence the [Mutex].
@@ -72,7 +74,15 @@ class Deliverer @Inject constructor(
         var applied: Settings? = null
         try {
             val current = automation.apply(now).also { applied = it }
-            releaseUnmuted(current)
+            try {
+                releaseUnmuted(current)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Whatever stopped the release, the rows that are already held are still owed their delivery.
+                val error = ctx.getString(R.string.focus_error_release_failed, e.message ?: e.javaClass.simpleName)
+                settings.update { it.copy(lastFocusError = error) }
+            }
             val rows = repo.selectHeldUndelivered()
             if (rows.isEmpty()) return@withLock DeliverResult(0)
             stillHeld = true
@@ -117,8 +127,10 @@ class Deliverer @Inject constructor(
      */
     private suspend fun releaseUnmuted(current: Settings) {
         if (!current.focusEnabled) return
-        val released = repo.selectMuted().filter { current.throttleMinutes(it.packageName, it.chatKey) != MUTED }
-        repo.unmute(released.map { it.id })
+        // Decided per chat, not per row: a throttle is a property of (app, chat), and this runs on every alarm.
+        repo.selectMutedChats()
+            .filter { (packageName, chatKey) -> current.throttleMinutes(packageName, chatKey) != MUTED }
+            .forEach { (packageName, chatKey) -> repo.unmuteChat(packageName, chatKey) }
     }
 
     /** The `since` of the digest still showing in the shade, or null when there is none (tapped, swiped, never posted). */

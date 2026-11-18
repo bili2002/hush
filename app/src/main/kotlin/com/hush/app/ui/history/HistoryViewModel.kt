@@ -301,7 +301,7 @@ class HistoryViewModel(
 
     /**
      * Applies the dialog's choice: an interval, [com.hush.app.focus.INSTANT] (never held),
-     * [com.hush.app.focus.MUTED] (hidden for good), or null = no rule, follow the app.
+     * [com.hush.app.focus.MUTED] (hidden, in no digest), or null = no rule, follow the app.
      */
     fun setChatThrottle(minutes: Int?) {
         // The subject comes from the dialog's own source, not from `state`, which lags it and is empty without a collector.

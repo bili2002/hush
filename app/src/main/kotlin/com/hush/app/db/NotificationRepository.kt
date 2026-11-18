@@ -20,9 +20,9 @@ class NotificationRepository @Inject constructor(
     private val queries get() = db.notificationsQueries
 
     /**
-     * Stamps are never taken from [e]. [muted] records the row as hidden-for-good in the same
-     * statement ([NotificationEvent.MUTED_AT]), so there is no moment in which it looks held and a
-     * delivery run could pick it up.
+     * Stamps are never taken from [e]. [muted] records the row as muted in the same statement
+     * ([NotificationEvent.MUTED_AT]), so there is no moment in which it looks held and a delivery
+     * run could pick it up.
      */
     suspend fun insert(e: NotificationEvent, muted: Boolean = false) = withContext(Dispatchers.IO) {
         queries.insert(
@@ -57,16 +57,23 @@ class NotificationRepository @Inject constructor(
         chunked(ids) { queries.markDelivered(ts = deliveredAt, ids = it) }
     }
 
-    /** The rows that are muted right now, oldest first. */
-    suspend fun selectMuted(): List<NotificationEvent> = withContext(Dispatchers.IO) {
-        queries.selectMuted().executeAsList().map { it.toEvent() }
+    /**
+     * The (app, [NotificationEvent.chatKey]) pairs that have anything muted right now. One entry per
+     * chat however many notifications it has, so asking is cheap even with a month of muted rows.
+     */
+    suspend fun selectMutedChats(): List<Pair<String, String?>> = withContext(Dispatchers.IO) {
+        queries.selectMutedChats().executeAsList().map { it.package_name to it.chat_key.takeIf { key -> key.isNotEmpty() } }
     }
 
     fun countMuted(): Flow<Long> = queries.countMuted().asFlow().mapToOne(Dispatchers.IO)
 
-    /** Makes muted rows ordinary held rows again, to be delivered by the normal due logic. Rows that are not muted are left alone. */
-    suspend fun unmute(ids: List<String>) = withContext(Dispatchers.IO) {
-        chunked(ids) { queries.unmute(it) }
+    /**
+     * Makes the muted rows of one chat ([chatKey] null = the app's rows that belong to no chat)
+     * ordinary held rows again, to be delivered by the normal due logic. Rows that are not muted
+     * are left alone.
+     */
+    suspend fun unmuteChat(packageName: String, chatKey: String?) = withContext(Dispatchers.IO) {
+        queries.unmuteChat(packageName = packageName, chatKey = chatKey.orEmpty())
     }
 
     /** Held rows delivered at or after [since], oldest first: what the digest carrying that `since` covers. */

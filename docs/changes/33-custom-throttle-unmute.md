@@ -5,9 +5,11 @@
   picker has "Custom…" (`CustomThrottleDialog`, hours and minutes, `THROTTLE_RANGE` = 5 min to
   24 h, parsed by `customThrottle`). A custom value in force is listed in its place.
 - **"Muted" lasts as long as the rule does.** At the start of every delivery run with Focus on,
-  `Deliverer.releaseUnmuted` takes the muted rows (`held = 1 AND delivered_at = 0`) whose rule in
-  force is no longer `MUTED` and clears their stamp (`unmute`, guarded so it can only touch muted
-  rows). From then on they are ordinary held rows: due by their new interval, covered by the
+  `Deliverer.releaseUnmuted` asks which chats have anything muted (`selectMutedChats`, one row per
+  app and chat key, so a month of muted rows costs nothing to check) and, for each whose rule in
+  force is no longer `MUTED`, clears the stamp of its muted rows (`unmuteChat`, guarded so it can
+  only touch muted rows). A failure there is reported in the Focus error line and does not stop
+  the delivery of rows that are already held. From then on they are ordinary held rows: due by their new interval, covered by the
   max-age guard, delivered once, part of the digest and its History link. This is what a profile
   switch, a schedule change or a rule edit does to what the previous rule muted. This replaces
   #28's "a muted row is finished for good".
@@ -29,5 +31,15 @@
   Monday, as one digest with a count and a link to the rows. The other side of that: un-muting a
   group that was muted everywhere for weeks delivers everything still on the phone (retention is
   30 days after sync).
-- **Custom intervals are bounded at 5 min and 24 h.** Slots restart at local midnight, so an
-  interval that does not divide the day has one shorter last slot; nothing depends on that.
+- **Custom intervals are bounded at 5 min and 24 h, and local midnight is always a slot
+  boundary** (`nextSlot`). The presets all divide the day, so nothing changes for them; a custom
+  100 or 1000 minutes has one shorter last slot and then restarts, which keeps the alarm and each
+  row's own due time on the same grid on both sides of midnight. "24 h" therefore means one
+  digest at midnight.
+- **The other direction is not symmetric.** A notification that is already held when its rule
+  becomes "Muted" (a switch into a profile that mutes its group) is delivered at that switch, as
+  decided in #28, not muted. So is a row that was released from "Muted" and is still waiting when
+  its old profile comes back. Muting applies to what arrives under the muting rule.
+- **Anything that stops a rule being "Muted" releases**, not only a profile switch: deleting a
+  muted group, taking a muted app off the hold list, or removing a muted chat rule delivers that
+  backlog too.

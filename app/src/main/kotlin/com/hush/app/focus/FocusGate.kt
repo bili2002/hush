@@ -8,7 +8,7 @@ enum class Decision {
     /** Hidden now, delivered in a digest later. */
     HOLD,
 
-    /** Hidden now and never delivered: recorded for History only. */
+    /** Hidden now and kept out of digests for as long as its rule stays "Muted". */
     MUTE,
 }
 

@@ -40,6 +40,7 @@ class ArchiveRepository(private val archive: Archive) {
                     bigText = n.bigText, subText = n.subText, channelId = n.channelId,
                     category = n.category, flags = n.flags.toLong(), importance = n.importance?.toLong(),
                     event = n.event, removedReason = n.removedReason?.toLong(), receivedAt = receivedAt,
+                    conversationId = n.conversationId, conversationTitle = n.conversationTitle,
                 )
                 if (ArchiveDatabaseFactory.scalarLong(archive.driver, "SELECT changes();") > 0L) accepted++
             }
@@ -64,7 +65,7 @@ class ArchiveRepository(private val archive: Archive) {
             """
             SELECT n.id, n.device, n.key, n.package_name, n.app_label, n.post_time, n.title, n.text,
                    n.big_text, n.sub_text, n.channel_id, n.category, n.flags, n.importance, n.event,
-                   n.removed_reason, n.received_at
+                   n.removed_reason, n.received_at, n.conversation_id, n.conversation_title
             FROM notification_fts
             JOIN notification n ON n.rowid = notification_fts.rowid
             WHERE notification_fts MATCH ?
@@ -103,6 +104,7 @@ class ArchiveRepository(private val archive: Archive) {
         postTime = post_time, title = title, text = text, bigText = big_text, subText = sub_text,
         channelId = channel_id, category = category, flags = flags.toInt(), importance = importance?.toInt(),
         event = event, removedReason = removed_reason?.toInt(),
+        conversationId = conversation_id, conversationTitle = conversation_title,
     )
 
     /** POSITIONAL: index N here is column N of the raw SELECT in [page]; change both together. */
@@ -112,6 +114,8 @@ class ArchiveRepository(private val archive: Archive) {
         bigText = getString(8), subText = getString(9), channelId = getString(10), category = getString(11),
         flags = getLong(12)!!.toInt(), importance = getLong(13)?.toInt(), event = getString(14)!!,
         removedReason = getLong(15)?.toInt(),
+        // 16 is received_at, which the API does not expose.
+        conversationId = getString(17), conversationTitle = getString(18),
     )
 
     companion object {

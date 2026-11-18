@@ -23,6 +23,9 @@ data class NotificationDto(
     val importance: Int? = null,
     val event: String,
     val removedReason: Int? = null,
+    /** Since app issue #20. Optional, so a phone build that predates it keeps syncing. */
+    val conversationId: String? = null,
+    val conversationTitle: String? = null,
 )
 
 @Serializable
@@ -50,6 +53,8 @@ data class ArchiveItem(
     val importance: Int?,
     val event: String,
     val removedReason: Int?,
+    val conversationId: String?,
+    val conversationTitle: String?,
 )
 
 /** [nextBefore] is the cursor for the next page, or null when this page was the last. */

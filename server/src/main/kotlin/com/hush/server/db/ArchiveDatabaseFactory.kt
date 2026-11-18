@@ -67,6 +67,10 @@ object ArchiveDatabaseFactory {
         when (val current = userVersion(driver)) {
             0L -> {
                 ArchiveDatabase.Schema.create(driver)
+                // Version 0 can also be an OLDER bootstrap that died before its stamp: its table exists,
+                // so CREATE ... IF NOT EXISTS above did nothing and the newer columns are missing. The
+                // migration steps are idempotent, so running them here closes that hole.
+                migrate(driver, from = 1L)
                 createFts(driver)
                 driver.execute(null, "PRAGMA user_version = $SCHEMA_VERSION;", 0)
             }

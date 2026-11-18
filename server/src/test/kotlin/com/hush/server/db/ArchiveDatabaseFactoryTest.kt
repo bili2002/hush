@@ -121,6 +121,32 @@ class ArchiveDatabaseFactoryTest {
         }
     }
 
+    private fun columns(driver: SqlDriver): List<String> =
+        driver.executeQuery(null, "PRAGMA table_info(notification);", { c ->
+            val out = mutableListOf<String>()
+            while (c.next().value) out += "${c.getString(1)} ${c.getString(2)}"
+            QueryResult.Value(out)
+        }, 0).value
+
+    @Test
+    fun `an old bootstrap that died before its version stamp is completed, not stamped as it is`() {
+        val dir = Files.createTempDirectory("hush-archive-unstamped")
+        val path = dir.resolve("archive.db").toString()
+        try {
+            createV1File(path)
+            JdbcSqliteDriver("jdbc:sqlite:$path").use { it.execute(null, "PRAGMA user_version = 0", 0) }
+
+            ArchiveDatabaseFactory.open(path).use { archive ->
+                assertEquals(2L, ArchiveDatabaseFactory.userVersion(archive.driver))
+                val repo = ArchiveRepository(archive)
+                repo.insertAll("d", listOf(synthetic("n1", "t", "b").copy(conversationId = "chat-7")), 1L)
+                assertEquals("chat-7", repo.page(null, null, null, null, Long.MAX_VALUE, 10).single { it.id == "n1" }.conversationId)
+            }
+        } finally {
+            dir.toFile().deleteRecursively()
+        }
+    }
+
     private fun migratedFileKeepsRowsAndTakesConversations(alsoHalfMigrated: Boolean) {
         val dir = Files.createTempDirectory("hush-archive-migrate")
         val path = dir.resolve("archive.db").toString()
@@ -140,10 +166,17 @@ class ArchiveDatabaseFactoryTest {
                     listOf(synthetic("new1", "Synthetic sender", "fresh body").copy(conversationId = "chat-7", conversationTitle = "Synthetic chat")),
                     receivedAt = 2L,
                 )
-                // Through the FTS join as well: its SELECT lists the columns by position.
-                val fresh = repo.page("fresh", null, null, null, Long.MAX_VALUE, 10).single()
-                assertEquals("chat-7", fresh.conversationId)
-                assertEquals("Synthetic chat", fresh.conversationTitle)
+                // Both read paths: the FTS join lists its columns by position, the plain page maps SELECT *.
+                val viaSearch = repo.page("fresh", null, null, null, Long.MAX_VALUE, 10).single()
+                val viaPage = repo.page(null, null, null, null, Long.MAX_VALUE, 10).single { it.id == "new1" }
+                for (fresh in listOf(viaSearch, viaPage)) {
+                    assertEquals("chat-7", fresh.conversationId)
+                    assertEquals("Synthetic chat", fresh.conversationTitle)
+                    assertEquals("Synthetic sender", fresh.title)
+                }
+                ArchiveDatabaseFactory.open(":memory:").use { freshFile ->
+                    assertEquals(columns(freshFile.driver), columns(archive.driver), "same columns in the same order as a fresh file")
+                }
             }
             // A second start finds version 2 and must not try to add the columns again.
             ArchiveDatabaseFactory.open(path).use { archive ->

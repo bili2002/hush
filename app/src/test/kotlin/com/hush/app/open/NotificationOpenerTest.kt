@@ -78,7 +78,7 @@ class NotificationOpenerTest {
     }
 
     @Test
-    fun `a broadcast target cannot open a screen, so the launcher is used and no chat is promised`() {
+    fun `a broadcast target cannot open a screen, so the launcher is used`() {
         installLauncher("com.example.alpha")
         val row = event("a")
         targets.remember(row, PendingIntent.getBroadcast(ctx, 7, Intent("com.example.TRAMPOLINE"), PendingIntent.FLAG_IMMUTABLE))

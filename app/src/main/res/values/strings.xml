@@ -129,7 +129,7 @@
     <string name="rules_move_to_none">Move out of this group</string>
     <string name="rules_stop_holding">Stop holding this app</string>
     <string name="rules_chats_title">Chat rules</string>
-    <string name="rules_chats_hint">None yet</string>
+    <string name="rules_chats_none">None yet</string>
     <string name="rules_same_as_app">Same as app (%1$s)</string>
     <string name="rules_retry">Retry</string>
     <string name="rules_app_options">Move or stop holding %1$s</string>
@@ -157,7 +157,7 @@
     <string name="history_open_label">Open %1$s</string>
     <string name="history_expand">Show full text</string>
     <string name="history_collapse">Show less</string>
-    <string name="history_open_failed">Couldn\'t open %1$s — uninstalled or disabled</string>
+    <string name="history_open_failed">Couldn\'t open %1$s — uninstalled, disabled, or no screen to open</string>
     <string name="history_dismiss">Dismiss</string>
     <string name="history_throttle_chat">Throttle this chat</string>
     <string name="history_throttle_title">Throttle this chat</string>

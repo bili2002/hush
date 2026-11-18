@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
@@ -45,6 +46,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
@@ -239,13 +241,15 @@ private fun GateCard(reasons: List<GateReason>, callbacks: FocusCallbacks) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable(onClick = action)
+                        .clickable(role = Role.Button, onClick = action)
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(Icons.Filled.ErrorOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error)
                     Spacer(Modifier.width(12.dp))
-                    Text(stringResource(label))
+                    Text(stringResource(label), modifier = Modifier.weight(1f))
+                    // The row is the fix; the arrow is what says so now that the words "tap to …" are gone.
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
                 }
             }
         }

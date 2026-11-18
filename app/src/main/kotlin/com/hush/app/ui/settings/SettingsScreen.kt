@@ -24,7 +24,6 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import com.hush.app.ui.components.HushCard
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -59,6 +58,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.hush.app.R
 import com.hush.app.ui.HushTheme
 import com.hush.app.ui.Routes
+import com.hush.app.ui.components.HushCard
 import java.time.ZoneId
 
 /**

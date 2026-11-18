@@ -185,7 +185,7 @@ fun RulesContent(state: RulesUiState, callbacks: RulesCallbacks) {
                     Text(stringResource(R.string.rules_chats_title), style = MaterialTheme.typography.titleMedium)
                     if (state.chatRules.isEmpty()) {
                         Text(
-                            stringResource(R.string.rules_chats_hint),
+                            stringResource(R.string.rules_chats_none),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

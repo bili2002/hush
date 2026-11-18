@@ -26,6 +26,9 @@ class Archive(val driver: SqlDriver, val db: ArchiveDatabase) : AutoCloseable {
  * statement is `IF NOT EXISTS`, and the stamp comes LAST, so a bootstrap that dies halfway is
  * retried on the next start instead of wedging the box with "table already exists".
  *
+ * An older file is upgraded in place, one version at a time ([migrate]); each step is written so
+ * that running it again after a crash is harmless, and the stamp again comes last.
+ *
  * FTS5 is created on the driver rather than in `Archive.sq` because SQLDelight's dialect does not
  * parse `CREATE VIRTUAL TABLE`. The index is an EXTERNAL-CONTENT table keyed on
  * `notification.rowid`; the three triggers keep it in sync. `notification` has a TEXT primary key,
@@ -37,7 +40,7 @@ class Archive(val driver: SqlDriver, val db: ArchiveDatabase) : AutoCloseable {
 object ArchiveDatabaseFactory {
 
     /** Current schema version; bump together with a migration path when the schema changes. */
-    const val SCHEMA_VERSION = 1L
+    const val SCHEMA_VERSION = 2L
 
     /** Milliseconds a connection waits on a locked file before giving up (file DBs only). */
     const val BUSY_TIMEOUT_MS = 5_000
@@ -64,10 +67,19 @@ object ArchiveDatabaseFactory {
         when (val current = userVersion(driver)) {
             0L -> {
                 ArchiveDatabase.Schema.create(driver)
+                // Version 0 can also be an OLDER bootstrap that died before its stamp: its table exists,
+                // so CREATE ... IF NOT EXISTS above did nothing and the newer columns are missing. The
+                // migration steps are idempotent, so running them here closes that hole.
+                migrate(driver, from = 1L)
                 createFts(driver)
                 driver.execute(null, "PRAGMA user_version = $SCHEMA_VERSION;", 0)
             }
             SCHEMA_VERSION -> Unit
+            in 1L until SCHEMA_VERSION -> {
+                migrate(driver, from = current)
+                driver.execute(null, "PRAGMA user_version = $SCHEMA_VERSION;", 0)
+                log.info("archive DB migrated from schema version {} to {}", current, SCHEMA_VERSION)
+            }
             else -> log.warn(
                 "archive DB is at schema version {} but this build targets {} — a rolled-back deploy? " +
                     "Leaving the file alone.",
@@ -76,7 +88,32 @@ object ArchiveDatabaseFactory {
         }
     }
 
-    private fun createFts(driver: SqlDriver) {
+    /**
+     * Upgrades an existing file from schema version [from] to [SCHEMA_VERSION]. Rows are never
+     * rewritten. The FTS index covers title/text/big_text only and is keyed on rowid, neither of
+     * which a new nullable column touches, so it needs no rebuild.
+     */
+    private fun migrate(driver: SqlDriver, from: Long) {
+        if (from < 2L) {
+            // v1 → v2: conversation identity. ADD COLUMN has no IF NOT EXISTS, hence the check: a
+            // start that died between the two statements must not fail on "duplicate column name".
+            for (column in listOf("conversation_id", "conversation_title")) {
+                if (!hasColumn(driver, "notification", column)) {
+                    driver.execute(null, "ALTER TABLE notification ADD COLUMN $column TEXT;", 0)
+                }
+            }
+        }
+    }
+
+    private fun hasColumn(driver: SqlDriver, table: String, column: String): Boolean =
+        driver.executeQuery(null, "PRAGMA table_info($table);", { c ->
+            var found = false
+            // table_info columns: cid, name, type, notnull, dflt_value, pk
+            while (c.next().value) if (c.getString(1) == column) found = true
+            QueryResult.Value(found)
+        }, 0).value
+
+    internal fun createFts(driver: SqlDriver) {
         val statements = listOf(
             """CREATE VIRTUAL TABLE IF NOT EXISTS notification_fts
                USING fts5(title, text, big_text, content='notification', content_rowid='rowid');""",

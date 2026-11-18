@@ -347,6 +347,39 @@ class ArchiveRoutesTest {
         assertNull(stored.appLabel)
     }
 
+    @Test
+    fun `conversation fields are stored and returned, on the plain page and through search`() = testApplication {
+        boot()
+        val client = jsonClient()
+        client.push(pushBody(
+            item("c1", title = "Synthetic sender", text = "hello group").copy(conversationId = "chat-7", conversationTitle = "Synthetic chat"),
+            item("p1", postTime = 500L, title = "Plain", text = "no conversation"),
+        ))
+
+        val plain = client.page().pageBody().items.associateBy { it.id }
+        assertEquals("chat-7", plain.getValue("c1").conversationId)
+        assertEquals("Synthetic chat", plain.getValue("c1").conversationTitle)
+        assertNull(plain.getValue("p1").conversationId)
+        assertNull(plain.getValue("p1").conversationTitle)
+
+        val searched = client.page("q=hello").pageBody().items.single()
+        assertEquals("chat-7", searched.conversationId)
+        assertEquals("Synthetic chat", searched.conversationTitle)
+    }
+
+    @Test
+    fun `a push from a phone build without the conversation fields is still accepted`() = testApplication {
+        boot()
+        val client = jsonClient()
+        val legacyBody = """{"device":"old-phone","items":[{"id":"legacy-1","key":"0|pkg.example.alpha|legacy-1",
+            "packageName":"pkg.example.alpha","appLabel":"Alpha","postTime":1000,"title":"Synthetic","text":"body",
+            "bigText":null,"subText":null,"channelId":"general","category":null,"flags":0,"importance":3,
+            "event":"posted","removedReason":null}]}"""
+
+        assertEquals(1, client.push(legacyBody).pushBody().accepted)
+        assertNull(client.page().pageBody().items.single().conversationId)
+    }
+
     // ------------------------------------------------------------------ static page (issue #10)
 
     @Test

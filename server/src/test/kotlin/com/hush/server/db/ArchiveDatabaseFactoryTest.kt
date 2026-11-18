@@ -2,6 +2,7 @@ package com.hush.server.db
 
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
+import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.hush.server.NotificationDto
 import java.nio.file.Files
 import kotlin.test.Test
@@ -87,4 +88,110 @@ class ArchiveDatabaseFactoryTest {
             assertTrue(ftsRowids(archive.driver, "changed").isEmpty())
         }
     }
+
+    /** A file exactly as the v1 server (issue #8) left it: v1 table, indexes, FTS, one row, version stamp 1. */
+    private fun createV1File(path: String, alsoHalfMigrated: Boolean = false) {
+        val driver = JdbcSqliteDriver("jdbc:sqlite:$path")
+        try {
+            listOf(
+                """
+                CREATE TABLE notification (
+                    id TEXT NOT NULL PRIMARY KEY, device TEXT NOT NULL, key TEXT NOT NULL, package_name TEXT NOT NULL,
+                    app_label TEXT, post_time INTEGER NOT NULL, title TEXT, text TEXT, big_text TEXT, sub_text TEXT,
+                    channel_id TEXT, category TEXT, flags INTEGER NOT NULL, importance INTEGER, event TEXT NOT NULL,
+                    removed_reason INTEGER, received_at INTEGER NOT NULL
+                )
+                """.trimIndent(),
+                "CREATE INDEX notification_post_time ON notification(post_time)",
+                "CREATE INDEX notification_package_post_time ON notification(package_name, post_time)",
+            ).forEach { driver.execute(null, it, 0) }
+            ArchiveDatabaseFactory.createFts(driver)
+            driver.execute(
+                null,
+                """
+                INSERT INTO notification (id, device, key, package_name, app_label, post_time, title, text, flags, event, received_at)
+                VALUES ('old1', 'test-device', '0|pkg.example.alpha|old1', 'pkg.example.alpha', 'Alpha', 1000, 'Legacy title', 'legacy body', 0, 'posted', 1)
+                """.trimIndent(),
+                0,
+            )
+            if (alsoHalfMigrated) driver.execute(null, "ALTER TABLE notification ADD COLUMN conversation_id TEXT", 0)
+            driver.execute(null, "PRAGMA user_version = 1", 0)
+        } finally {
+            driver.close()
+        }
+    }
+
+    private fun columns(driver: SqlDriver): List<String> =
+        driver.executeQuery(null, "PRAGMA table_info(notification);", { c ->
+            val out = mutableListOf<String>()
+            while (c.next().value) out += "${c.getString(1)} ${c.getString(2)}"
+            QueryResult.Value(out)
+        }, 0).value
+
+    @Test
+    fun `an old bootstrap that died before its version stamp is completed, not stamped as it is`() {
+        val dir = Files.createTempDirectory("hush-archive-unstamped")
+        val path = dir.resolve("archive.db").toString()
+        try {
+            createV1File(path)
+            JdbcSqliteDriver("jdbc:sqlite:$path").use { it.execute(null, "PRAGMA user_version = 0", 0) }
+
+            ArchiveDatabaseFactory.open(path).use { archive ->
+                assertEquals(2L, ArchiveDatabaseFactory.userVersion(archive.driver))
+                val repo = ArchiveRepository(archive)
+                repo.insertAll("d", listOf(synthetic("n1", "t", "b").copy(conversationId = "chat-7")), 1L)
+                assertEquals("chat-7", repo.page(null, null, null, null, Long.MAX_VALUE, 10).single { it.id == "n1" }.conversationId)
+            }
+        } finally {
+            dir.toFile().deleteRecursively()
+        }
+    }
+
+    private fun migratedFileKeepsRowsAndTakesConversations(alsoHalfMigrated: Boolean) {
+        val dir = Files.createTempDirectory("hush-archive-migrate")
+        val path = dir.resolve("archive.db").toString()
+        try {
+            createV1File(path, alsoHalfMigrated)
+
+            ArchiveDatabaseFactory.open(path).use { archive ->
+                assertEquals(2L, ArchiveDatabaseFactory.userVersion(archive.driver))
+                val repo = ArchiveRepository(archive)
+                val old = repo.page(null, null, null, null, Long.MAX_VALUE, 10).single()
+                assertEquals("old1", old.id)
+                assertEquals(null, old.conversationId)
+                assertEquals(1, ftsRowids(archive.driver, "legacy").size, "the FTS index still points at the old row")
+
+                repo.insertAll(
+                    "test-device",
+                    listOf(synthetic("new1", "Synthetic sender", "fresh body").copy(conversationId = "chat-7", conversationTitle = "Synthetic chat")),
+                    receivedAt = 2L,
+                )
+                // Both read paths: the FTS join lists its columns by position, the plain page maps SELECT *.
+                val viaSearch = repo.page("fresh", null, null, null, Long.MAX_VALUE, 10).single()
+                val viaPage = repo.page(null, null, null, null, Long.MAX_VALUE, 10).single { it.id == "new1" }
+                for (fresh in listOf(viaSearch, viaPage)) {
+                    assertEquals("chat-7", fresh.conversationId)
+                    assertEquals("Synthetic chat", fresh.conversationTitle)
+                    assertEquals("Synthetic sender", fresh.title)
+                }
+                ArchiveDatabaseFactory.open(":memory:").use { freshFile ->
+                    assertEquals(columns(freshFile.driver), columns(archive.driver), "same columns in the same order as a fresh file")
+                }
+            }
+            // A second start finds version 2 and must not try to add the columns again.
+            ArchiveDatabaseFactory.open(path).use { archive ->
+                assertEquals(2L, ArchiveRepository(archive).count())
+            }
+        } finally {
+            dir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a v1 file is upgraded in place - rows and FTS survive, new rows carry a conversation`() =
+        migratedFileKeepsRowsAndTakesConversations(alsoHalfMigrated = false)
+
+    @Test
+    fun `an upgrade that died after the first column is finished on the next start`() =
+        migratedFileKeepsRowsAndTakesConversations(alsoHalfMigrated = true)
 }

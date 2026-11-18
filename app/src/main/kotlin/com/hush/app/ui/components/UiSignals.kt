@@ -17,6 +17,9 @@ class UiSignals @Inject constructor() {
     /** Pending digest deep link; set from the activity's intent, cleared when History is left or "Show all" is tapped. */
     val digestLink = MutableStateFlow<DigestLink?>(null)
 
+    /** The Focus screen asked History to show what is muted; History takes it and clears it. */
+    val showMuted = MutableStateFlow(false)
+
     private val _navigate = MutableSharedFlow<String>(extraBufferCapacity = 1)
 
     /** Routes a screen asked the nav shell to open. */

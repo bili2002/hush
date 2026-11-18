@@ -70,6 +70,24 @@ class FocusRulesTest {
     }
 
     @Test
+    fun `a custom interval is hours and minutes within five minutes to a day`() {
+        assertEquals(90, customThrottle("1", "30"))
+        assertEquals(45, customThrottle("", "45"))
+        assertEquals(180, customThrottle(" 3 ", ""))
+        assertEquals(100, customThrottle("", "100"), "minutes alone may exceed an hour")
+        assertEquals(5, customThrottle("0", "5"))
+        assertEquals(24 * 60, customThrottle("24", "0"))
+
+        assertNull(customThrottle("", ""), "nothing typed")
+        assertNull(customThrottle("0", "4"), "too short")
+        assertNull(customThrottle("24", "1"), "too long")
+        assertNull(customThrottle("x", "10"))
+        assertNull(customThrottle("1", "-5"))
+        assertNull(customThrottle("99999999999", "0"), "not an Int")
+        assertTrue(THROTTLE_CHOICES.all { it in THROTTLE_RANGE })
+    }
+
+    @Test
     fun `the automatic sort holds the suggested apps in their preset group and nothing else`() {
         val sms = Presets.neverAutomatic.first()
         val before = settings(

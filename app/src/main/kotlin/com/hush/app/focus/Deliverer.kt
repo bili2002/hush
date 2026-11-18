@@ -20,13 +20,15 @@ import java.time.ZoneId
 import java.util.Date
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
- * Owns the HELD → DELIVERED transition: selects the held-undelivered rows that are due, posts ONE
+ * Owns the HELD → DELIVERED transition (and MUTED → HELD, when a muted row's rule stops being
+ * "Muted"): selects the held-undelivered rows that are due, posts ONE
  * digest notification, marks those rows delivered, and re-arms the alarm. Callers: the alarm ([DeliveryReceiver]), boot/time-change
  * ([RescheduleReceiver]), the UI ([DefaultFocusActionsImpl]) and the Sync worker's periodic
  * safety net. All of them can overlap, hence the [Mutex].
@@ -72,6 +74,15 @@ class Deliverer @Inject constructor(
         var applied: Settings? = null
         try {
             val current = automation.apply(now).also { applied = it }
+            try {
+                releaseUnmuted(current)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Whatever stopped the release, the rows that are already held are still owed their delivery.
+                val error = ctx.getString(R.string.focus_error_release_failed, e.message ?: e.javaClass.simpleName)
+                settings.update { it.copy(lastFocusError = error) }
+            }
             val rows = repo.selectHeldUndelivered()
             if (rows.isEmpty()) return@withLock DeliverResult(0)
             stillHeld = true
@@ -105,6 +116,21 @@ class Deliverer @Inject constructor(
             // A run that failed before it could look at the rows assumes some are held: one alarm too many beats none.
             scheduler.rearm(now, held = stillHeld || applied == null)
         }
+    }
+
+    /**
+     * "Muted" lasts as long as the rule does. While Focus is on, a muted row whose rule in force is
+     * now anything else (another profile took over, the schedule switched, the rule was edited)
+     * becomes an ordinary held row: from here on it is due by its new interval like any other, and
+     * the max-age guard applies to it. With Focus off nothing is released: off is not a rule that
+     * un-mutes, or "Muted" would only ever mean "until Focus ends".
+     */
+    private suspend fun releaseUnmuted(current: Settings) {
+        if (!current.focusEnabled) return
+        // Decided per chat, not per row: a throttle is a property of (app, chat), and this runs on every alarm.
+        repo.selectMutedChats()
+            .filter { (packageName, chatKey) -> current.throttleMinutes(packageName, chatKey) != MUTED }
+            .forEach { (packageName, chatKey) -> repo.unmuteChat(packageName, chatKey) }
     }
 
     /** The `since` of the digest still showing in the shade, or null when there is none (tapped, swiped, never posted). */

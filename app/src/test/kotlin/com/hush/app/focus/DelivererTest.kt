@@ -13,6 +13,7 @@ import com.hush.app.testing.FakeDnd
 import com.hush.app.testing.FakeSettingsStore
 import com.hush.app.testing.event
 import com.hush.app.testing.fixedClock
+import com.hush.app.testing.mutedIds
 import com.hush.app.testing.testRepository
 import com.hush.app.ui.MainActivity
 import java.time.ZoneId
@@ -82,6 +83,72 @@ class DelivererTest {
 
         assertEquals(DeliverResult(4), deliverer.deliverDue())
         assertTrue(repo.selectHeldUndelivered().isEmpty())
+    }
+
+    // ---- muted, then not ----
+
+    private fun mutedGroup(minutes: Int?) =
+        FocusRules(categories = listOf(FocusCategory("quiet", "Quiet", minutes)), appCategory = mapOf("com.example.alpha" to "quiet"))
+
+    @Test
+    fun `a muted notification is delivered once its rule stops being Muted`() = runTest {
+        settings.update { it.copy(rules = mutedGroup(MUTED)) }
+        val h21 = slotOpen - 60 * 60_000L
+        repo.insert(event("old", packageName = "com.example.alpha", postTime = h21, held = true), muted = true)
+        repo.insert(event("new", packageName = "com.example.alpha", postTime = slotOpen + 60_000L, held = true), muted = true)
+
+        assertEquals(DeliverResult(0), deliverer.deliverDue(), "still muted: nothing happens")
+        assertEquals(2, repo.mutedIds().size)
+
+        settings.update { it.copy(rules = mutedGroup(60)) }
+        assertEquals(DeliverResult(1), deliverer.deliverDue(), "the one from the last slot is due at once")
+        assertEquals(listOf("new"), repo.selectHeldUndelivered().map { it.id }, "the one from this slot waits for its boundary like any held row")
+        assertTrue(repo.mutedIds().isEmpty())
+
+        assertEquals(DeliverResult(0), deliverer.deliverDue(), "and nothing is delivered twice")
+    }
+
+    @Test
+    fun `switching to a profile that does not mute a group releases what the other profile muted`() = runTest {
+        // Both profiles mute one chat of beta; only the first mutes alpha's group.
+        settings.update {
+            it.copy(rules = mutedGroup(MUTED).copy(seeded = true, chatRules = listOf(ChatRule("com.example.beta", "title other", "Other", MUTED))))
+                .withProfileAdded("day", "Day", copyOf = DEFAULT_PROFILE_ID, oneTime = false)
+                .withProfileEdited("day") { s -> s.withCategoryMinutes("quiet", INSTANT) }
+        }
+        repo.insert(event("m", packageName = "com.example.alpha", postTime = slotOpen + 60_000L, held = true), muted = true)
+        repo.insert(event("other", packageName = "com.example.beta", postTime = slotOpen + 60_000L, held = true), muted = true)
+        deliverer.deliverDue()
+        assertEquals(2, repo.mutedIds().size)
+
+        settings.update { it.withActiveProfile("day") }
+
+        assertEquals(DeliverResult(1), deliverer.deliverDue(), "instantly in the new profile: delivered now")
+        assertEquals(listOf("other"), repo.mutedIds(), "what the new profile still mutes stays muted")
+    }
+
+    @Test
+    fun `release is per chat - a muted chat of an app whose other notifications are not muted stays muted`() = runTest {
+        settings.update { it.copy(rules = FocusRules(chatRules = listOf(ChatRule("com.example.alpha", "c1", "Group one", MUTED)))) }
+        val h21 = slotOpen - 60 * 60_000L
+        repo.insert(event("chat", packageName = "com.example.alpha", postTime = h21, held = true, conversationId = "c1"), muted = true)
+        // Muted under an earlier rule; its chat (keyed by title) and the keyless one now follow the app's 60 min.
+        repo.insert(event("titled", packageName = "com.example.alpha", postTime = h21, held = true), muted = true)
+        repo.insert(event("keyless", packageName = "com.example.alpha", postTime = h21, held = true, title = null), muted = true)
+
+        assertEquals(DeliverResult(2), deliverer.deliverDue())
+        assertEquals(listOf("chat"), repo.mutedIds())
+    }
+
+    @Test
+    fun `turning Focus off does not release what is muted`() = runTest {
+        settings.update { it.copy(rules = mutedGroup(MUTED)) }
+        repo.insert(event("m", packageName = "com.example.alpha", postTime = slotOpen - 60 * 60_000L, held = true), muted = true)
+
+        settings.update { it.copy(focusEnabled = false) }
+        assertEquals(DeliverResult(0), deliverer.deliverDue(force = true))
+        assertEquals(1, repo.mutedIds().size)
+        assertEquals(0, shadowOf(nm).allNotifications.size)
     }
 
     @Test

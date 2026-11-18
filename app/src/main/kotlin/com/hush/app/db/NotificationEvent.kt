@@ -32,14 +32,15 @@ data class NotificationEvent(
      */
     val chatKey: String? get() = (conversationId ?: title)?.takeIf { it.isNotEmpty() }
 
-    /** Hidden by a "Muted" rule: it was never in a digest and never will be. */
+    /** Hidden by a "Muted" rule and in no digest, for as long as its rule stays "Muted". */
     val muted: Boolean get() = held && deliveredAt == MUTED_AT
 
     companion object {
         /**
-         * The `deliveredAt` of a muted row. A muted row is finished the moment it is recorded, so it
-         * carries a delivery stamp like any other released row (nothing treats it as still held), and
+         * The `deliveredAt` of a muted row. A muted row is closed the moment it is recorded, so it
+         * carries a delivery stamp like any other released row (nothing treats it as waiting), and
          * this value, which no real delivery can have, tells it apart from one that was in a digest.
+         * If its rule later stops being "Muted" the stamp is cleared and it is an ordinary held row.
          */
         const val MUTED_AT = 0L
     }

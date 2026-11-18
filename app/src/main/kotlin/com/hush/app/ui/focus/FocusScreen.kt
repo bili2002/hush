@@ -11,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -96,6 +97,7 @@ data class FocusCallbacks(
     val onDeleteProfile: (String) -> Unit = {},
     val onEditProfile: (String) -> Unit = {},
     val onOpenSchedule: () -> Unit = {},
+    val onShowMuted: () -> Unit = {},
     val onResumeSchedule: () -> Unit = {},
     val onOpenDndAccess: () -> Unit = {},
     val onOpenListenerSettings: () -> Unit = {},
@@ -143,6 +145,7 @@ fun FocusScreen(vm: FocusViewModel = hiltViewModel()) {
             onDeleteProfile = vm::deleteProfile,
             onEditProfile = vm::editProfile,
             onOpenSchedule = vm::openSchedule,
+            onShowMuted = vm::showMuted,
             onResumeSchedule = vm::resumeSchedule,
             onOpenDndAccess = { open(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)) },
             onOpenListenerSettings = { open(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
@@ -429,6 +432,12 @@ private fun ToggleCard(state: FocusUiState, zone: ZoneId, callbacks: FocusCallba
             }
 
             state.schedule?.let { ScheduleLine(it, zone, callbacks.onResumeSchedule) }
+
+            if (state.mutedCount > 0) {
+                TextButton(onClick = callbacks.onShowMuted, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                    Text(stringResource(R.string.focus_muted, state.mutedCount))
+                }
+            }
 
             if (state.enabled) {
                 if (state.onButGated) {

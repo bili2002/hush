@@ -9,6 +9,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -35,6 +39,13 @@ data class ChatThrottle(
  */
 @Composable
 fun ChatThrottleDialog(dialog: ChatThrottle, onPick: (Int?) -> Unit, onDismiss: () -> Unit) {
+    // "Custom…" swaps this dialog for the entry dialog; cancelling that comes back to the list. Keyed by the
+    // chat and not saved across process death: the next chat's dialog must never open on someone else's entry.
+    var custom by remember(dialog.packageName, dialog.chatKey) { mutableStateOf(false) }
+    if (custom) {
+        CustomThrottleDialog(initial = dialog.ruleMinutes, onConfirm = onPick, onDismiss = { custom = false })
+        return
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.history_throttle_title)) },
@@ -51,6 +62,7 @@ fun ChatThrottleDialog(dialog: ChatThrottle, onPick: (Int?) -> Unit, onDismiss: 
                     inheritLabel = stringResource(R.string.rules_same_as_app, throttleEvery(dialog.appMinutes)),
                     // For a chat of an app that is not held, "Instantly" would be a rule that changes nothing.
                     offerInstant = dialog.appMinutes != INSTANT || dialog.ruleMinutes == INSTANT,
+                    onCustom = { custom = true },
                     onPick = onPick,
                 )
             }

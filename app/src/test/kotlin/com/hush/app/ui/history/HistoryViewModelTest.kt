@@ -63,6 +63,69 @@ class HistoryViewModelTest {
     private fun HistoryUiState.ids() = days.flatMap { it.items }.map { it.id }
 
     @Test
+    fun `the muted filter shows what is muted now, combines with the app filter, and the count offers it`() = runTest {
+        repo.insert(event("m1", packageName = "com.example.alpha", postTime = 10, held = true), muted = true)
+        repo.insert(event("m2", packageName = "com.example.beta", postTime = 20, held = true), muted = true)
+        repo.insert(event("h", packageName = "com.example.alpha", postTime = 30, held = true))
+        repo.insert(event("p", packageName = "com.example.alpha", postTime = 40))
+        val vm = vm()
+        assertEquals(2, vm.loaded().mutedCount)
+
+        vm.setMutedFilter(true)
+        val muted = vm.state.first { (it.mode as? HistoryMode.Browse)?.muted == true }
+        assertEquals(listOf("m2", "m1"), muted.ids())
+        assertEquals(2, muted.total)
+
+        vm.setAppFilter("com.example.alpha")
+        assertEquals(listOf("m1"), vm.state.first { (it.mode as? HistoryMode.Browse)?.app == "com.example.alpha" }.ids())
+
+        repo.unmuteChat("com.example.alpha", "title m1")
+        val emptied = vm.state.first { it.mutedCount == 1 && it.days.isEmpty() }
+        assertEquals(EmptyKind.APP_EMPTY, emptied.empty)
+
+        vm.setMutedFilter(false)
+        assertEquals(listOf("p", "h", "m1"), vm.state.first { (it.mode as? HistoryMode.Browse)?.muted == false }.ids())
+    }
+
+    @Test
+    fun `a request from the Focus screen shows the muted ones, dropping the digest view and other filters`() = runTest {
+        repo.insert(event("m", packageName = "com.example.beta", postTime = 10, held = true), muted = true)
+        repo.insert(event("h", held = true, postTime = 20))
+        repo.markDelivered(listOf("h"), deliveredAt = 1_000)
+        signals.digestLink.value = DigestLink(deliveredAt = 1_000)
+        val vm = vm()
+        vm.setAppFilter("com.example.alpha")
+        assertEquals(listOf("h"), vm.loaded().ids())
+
+        signals.showMuted.value = true
+
+        val s = vm.state.first { (it.mode as? HistoryMode.Browse)?.muted == true }
+        assertEquals(HistoryMode.Browse(muted = true), s.mode)
+        assertEquals(listOf("m"), s.ids())
+        assertNull(signals.digestLink.value)
+        assertEquals(false, signals.showMuted.value, "taken once")
+    }
+
+    @Test
+    fun `a request made before History was ever opened is honoured, and it clears a search`() = runTest {
+        repo.insert(event("m", postTime = 10, held = true, title = "quiet one"), muted = true)
+        repo.insert(event("p", postTime = 20, title = "needle"))
+        // Focus is the start screen: the request usually exists before this ViewModel does.
+        signals.showMuted.value = true
+        val fresh = vm()
+        assertEquals(listOf("m"), fresh.state.first { (it.mode as? HistoryMode.Browse)?.muted == true }.ids())
+
+        fresh.setMutedFilter(false)
+        fresh.setQuery("needle")
+        assertEquals(listOf("p"), fresh.state.first { (it.mode as? HistoryMode.Browse)?.query == "needle" }.ids())
+
+        signals.showMuted.value = true
+        val s = fresh.state.first { it.mode == HistoryMode.Browse(muted = true) }
+        assertEquals(listOf("m"), s.ids())
+        assertEquals("", fresh.query.value)
+    }
+
+    @Test
     fun `loading until the first page arrives, then rows are grouped by day newest first`() = runTest {
         repo.insert(event("y1", postTime = at("2024-01-09T08:00:00Z")))
         repo.insert(event("t1", postTime = at("2024-01-10T09:00:00Z")))

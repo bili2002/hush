@@ -114,8 +114,17 @@ fun HushRoot(
         }
     }
     // Screens ask for pushes (Focus → hold-list picker) without the NavHost call sites growing parameters.
+    // A request for a tab is a tab switch, same as tapping it in the bar, not a screen on top of the current tab.
     LaunchedEffect(navigationRequests) {
-        navigationRequests.collect { route -> navController.navigate(route) { launchSingleTop = true } }
+        navigationRequests.collect { route ->
+            navController.navigate(route) {
+                if (tabs.any { it.route == route }) {
+                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                    restoreState = true
+                }
+                launchSingleTop = true
+            }
+        }
     }
     // Leaving History drops the digest filter; a rotation is not "leaving" (the restored stack is still on History).
     val onHistory = currentDestination?.hierarchy?.any { it.route == Routes.HISTORY } == true

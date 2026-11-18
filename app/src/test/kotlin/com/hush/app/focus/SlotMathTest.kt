@@ -74,6 +74,24 @@ class SlotMathTest {
     }
 
     @Test
+    fun `an interval that does not divide the day restarts at local midnight`() {
+        // 100 min: boundaries at 00:00, 01:40, … 23:20, then midnight, not 01:00 of the old grid.
+        check(utc, "2024-01-08T22:00:00", 100, "2024-01-08T23:20:00")
+        check(utc, "2024-01-08T23:20:00", 100, "2024-01-09T00:00:00")
+        check(utc, "2024-01-09T00:00:00", 100, "2024-01-09T01:40:00")
+        // 1000 min: one boundary at 16:40, then midnight. Seen from before and from after midnight it is the same grid.
+        check(utc, "2024-01-08T17:00:00", 1000, "2024-01-09T00:00:00")
+        check(utc, "2024-01-09T00:30:00", 1000, "2024-01-09T16:40:00")
+        check(utc, "2024-01-08T10:00:00", 7, "2024-01-08T10:02:00")
+        // A full day: midnight only.
+        check(utc, "2024-01-08T00:00:00", 1440, "2024-01-09T00:00:00")
+        check(utc, "2024-01-08T23:59:59", 1440, "2024-01-09T00:00:00")
+        // The short and the long day in Sofia still end at their own midnight.
+        check(sofia, "2024-03-31T20:00:00", 1000, "2024-04-01T00:00:00")
+        check(sofia, "2026-10-25T20:00:00", 1000, "2026-10-26T00:00:00")
+    }
+
+    @Test
     fun `rejects non-positive slot`() {
         assertFailsWith<IllegalArgumentException> { nextSlot(0, 0, utc) }
         assertFailsWith<IllegalArgumentException> { nextSlot(0, -15, utc) }

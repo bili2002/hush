@@ -443,6 +443,26 @@ class FocusViewModelTest {
     }
 
     @Test
+    fun `the muted count is shown and leads to History's muted view`() = runTest {
+        repo.insert(event("m1", held = true, postTime = 1), muted = true)
+        repo.insert(event("m2", held = true, postTime = 2), muted = true)
+        repo.insert(event("h", held = true, postTime = 3))
+        var route: String? = null
+        val job = launch(start = CoroutineStart.UNDISPATCHED) { signals.navigate.collect { route = it } }
+        val vm = vm()
+
+        val s = vm.loaded()
+        assertEquals(2, s.mutedCount)
+        assertEquals(1, s.heldCount, "muted ones are not waiting for a digest")
+
+        vm.showMuted()
+        runCurrent()
+        assertTrue(signals.showMuted.value)
+        assertEquals("history", route)
+        job.cancel()
+    }
+
+    @Test
     fun `a Do Not Disturb failure is shown`() = runTest {
         val settings = FakeSettingsStore(twoProfiles.let { it.copy(profiles = it.profiles.copy(dndError = "no access")) })
         assertEquals("no access", vm(settings).loaded().dndError)

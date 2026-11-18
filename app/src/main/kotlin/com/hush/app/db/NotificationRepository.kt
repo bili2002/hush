@@ -20,9 +20,9 @@ class NotificationRepository @Inject constructor(
     private val queries get() = db.notificationsQueries
 
     /**
-     * Stamps are never taken from [e]. [muted] records the row as hidden-for-good in the same
-     * statement ([NotificationEvent.MUTED_AT]), so there is no moment in which it looks held and a
-     * delivery run could pick it up.
+     * Stamps are never taken from [e]. [muted] records the row as muted in the same statement
+     * ([NotificationEvent.MUTED_AT]), so there is no moment in which it looks held and a delivery
+     * run could pick it up.
      */
     suspend fun insert(e: NotificationEvent, muted: Boolean = false) = withContext(Dispatchers.IO) {
         queries.insert(
@@ -55,6 +55,25 @@ class NotificationRepository @Inject constructor(
 
     suspend fun markDelivered(ids: List<String>, deliveredAt: Long) = withContext(Dispatchers.IO) {
         chunked(ids) { queries.markDelivered(ts = deliveredAt, ids = it) }
+    }
+
+    /**
+     * The (app, [NotificationEvent.chatKey]) pairs that have anything muted right now. One entry per
+     * chat however many notifications it has, so asking is cheap even with a month of muted rows.
+     */
+    suspend fun selectMutedChats(): List<Pair<String, String?>> = withContext(Dispatchers.IO) {
+        queries.selectMutedChats().executeAsList().map { it.package_name to it.chat_key.takeIf { key -> key.isNotEmpty() } }
+    }
+
+    fun countMuted(): Flow<Long> = queries.countMuted().asFlow().mapToOne(Dispatchers.IO)
+
+    /**
+     * Makes the muted rows of one chat ([chatKey] null = the app's rows that belong to no chat)
+     * ordinary held rows again, to be delivered by the normal due logic. Rows that are not muted
+     * are left alone.
+     */
+    suspend fun unmuteChat(packageName: String, chatKey: String?) = withContext(Dispatchers.IO) {
+        queries.unmuteChat(packageName = packageName, chatKey = chatKey.orEmpty())
     }
 
     /** Held rows delivered at or after [since], oldest first: what the digest carrying that `since` covers. */
@@ -91,16 +110,20 @@ class NotificationRepository @Inject constructor(
     /**
      * The History list: POSTED rows, newest first. [q] is a substring matched over title, text,
      * big_text and the conversation title (`%`, `_` and `\` are literal; empty = no search);
-     * [packageName] and [chat] (a [NotificationEvent.chatKey]) narrow it further when non-null.
+     * [packageName] and [chat] (a [NotificationEvent.chatKey]) narrow it further when non-null, and
+     * [mutedOnly] to the rows that are muted right now.
      */
-    fun selectHistory(q: String, packageName: String?, chat: String?, limit: Int): Flow<List<NotificationEvent>> =
-        queries.selectHistory(packageName = packageName, chat = chat, q = escapeLike(q), limit = limit.toLong())
+    fun selectHistory(q: String, packageName: String?, chat: String?, limit: Int, mutedOnly: Boolean = false): Flow<List<NotificationEvent>> =
+        queries.selectHistory(mutedOnly = mutedOnly.toLong(), packageName = packageName, chat = chat, q = escapeLike(q), limit = limit.toLong())
             .asFlow().mapToList(Dispatchers.IO)
             .map { rows -> rows.map { it.toEvent() } }
 
     /** How many rows [selectHistory] would return without its limit. */
-    fun countHistory(q: String, packageName: String?, chat: String?): Flow<Long> =
-        queries.countHistory(packageName = packageName, chat = chat, q = escapeLike(q)).asFlow().mapToOne(Dispatchers.IO)
+    fun countHistory(q: String, packageName: String?, chat: String?, mutedOnly: Boolean = false): Flow<Long> =
+        queries.countHistory(mutedOnly = mutedOnly.toLong(), packageName = packageName, chat = chat, q = escapeLike(q))
+            .asFlow().mapToOne(Dispatchers.IO)
+
+    private fun Boolean.toLong(): Long = if (this) 1L else 0L
 
     /** The chats of one app, most recent first; the title is the newest name the chat was seen under. */
     fun selectChats(packageName: String): Flow<List<ChatSummary>> =

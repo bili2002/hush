@@ -72,6 +72,7 @@ class Deliverer @Inject constructor(
         var applied: Settings? = null
         try {
             val current = automation.apply(now).also { applied = it }
+            releaseUnmuted(current)
             val rows = repo.selectHeldUndelivered()
             if (rows.isEmpty()) return@withLock DeliverResult(0)
             stillHeld = true
@@ -105,6 +106,19 @@ class Deliverer @Inject constructor(
             // A run that failed before it could look at the rows assumes some are held: one alarm too many beats none.
             scheduler.rearm(now, held = stillHeld || applied == null)
         }
+    }
+
+    /**
+     * "Muted" lasts as long as the rule does. While Focus is on, a muted row whose rule in force is
+     * now anything else (another profile took over, the schedule switched, the rule was edited)
+     * becomes an ordinary held row: from here on it is due by its new interval like any other, and
+     * the max-age guard applies to it. With Focus off nothing is released: off is not a rule that
+     * un-mutes, or "Muted" would only ever mean "until Focus ends".
+     */
+    private suspend fun releaseUnmuted(current: Settings) {
+        if (!current.focusEnabled) return
+        val released = repo.selectMuted().filter { current.throttleMinutes(it.packageName, it.chatKey) != MUTED }
+        repo.unmute(released.map { it.id })
     }
 
     /** The `since` of the digest still showing in the shade, or null when there is none (tapped, swiped, never posted). */

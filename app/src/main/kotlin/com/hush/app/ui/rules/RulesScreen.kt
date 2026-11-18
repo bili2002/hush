@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -58,6 +59,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -70,6 +72,8 @@ import com.hush.app.focus.HeldApp
 import com.hush.app.focus.INSTANT
 import com.hush.app.focus.MUTED
 import com.hush.app.focus.THROTTLE_CHOICES
+import com.hush.app.focus.THROTTLE_RANGE
+import com.hush.app.focus.customThrottle
 import com.hush.app.ui.HushTheme
 import com.hush.app.ui.components.AppIcon
 import com.hush.app.ui.components.HushCard
@@ -464,11 +468,22 @@ private fun ChatRuleCard(row: ChatRuleRow, callbacks: RulesCallbacks) {
  * The one throttle picker: a chip showing the current choice that drops down "inherit" (null),
  * "Instantly", the intervals and "Muted". [minutes] null = inheriting; [inheritLabel] null =
  * nothing to inherit from, so that option is not offered. [offerInstant] also covers "Muted":
- * the default interval can be neither.
+ * the default interval can be neither. "Custom…" opens [CustomThrottleDialog].
  */
 @Composable
 fun ThrottleChip(minutes: Int?, inheritLabel: String?, offerInstant: Boolean = true, onPick: (Int?) -> Unit) {
     var open by remember { mutableStateOf(false) }
+    var custom by rememberSaveable { mutableStateOf(false) }
+    if (custom) {
+        CustomThrottleDialog(
+            initial = minutes,
+            onConfirm = {
+                custom = false
+                onPick(it)
+            },
+            onDismiss = { custom = false },
+        )
+    }
     Box {
         AssistChip(
             onClick = { open = true },
@@ -476,7 +491,16 @@ fun ThrottleChip(minutes: Int?, inheritLabel: String?, offerInstant: Boolean = t
             trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null) },
         )
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            ThrottleOptions(selected = minutes, inheritLabel = inheritLabel, offerInstant = offerInstant, offerMuted = offerInstant) {
+            ThrottleOptions(
+                selected = minutes,
+                inheritLabel = inheritLabel,
+                offerInstant = offerInstant,
+                offerMuted = offerInstant,
+                onCustom = {
+                    open = false
+                    custom = true
+                },
+            ) {
                 open = false
                 onPick(it)
             }
@@ -484,28 +508,83 @@ fun ThrottleChip(minutes: Int?, inheritLabel: String?, offerInstant: Boolean = t
     }
 }
 
-/** The option rows themselves, shared by [ThrottleChip] and History's "Throttle this chat" dialog. */
+/**
+ * The option rows themselves, shared by [ThrottleChip] and the chat-throttle dialog: inherit,
+ * "Instantly", the intervals (a custom one in force is listed in its place), "Custom…", "Muted".
+ */
 @Composable
 fun ThrottleOptions(
     selected: Int?,
     inheritLabel: String?,
     offerInstant: Boolean = true,
     offerMuted: Boolean = true,
+    onCustom: () -> Unit,
     onPick: (Int?) -> Unit,
 ) {
-    // A value saved by an older build (or any value off the list) is still offered, in its place.
     val intervals = (THROTTLE_CHOICES + listOfNotNull(selected?.takeIf { it > INSTANT })).distinct().sorted()
     val inherit: List<Int?> = if (inheritLabel != null) listOf(null) else emptyList()
-    val options: List<Int?> = inherit + listOfNotNull(INSTANT.takeIf { offerInstant }) + intervals + listOfNotNull(MUTED.takeIf { offerMuted })
-    options.forEach { option ->
-        DropdownMenuItem(
-            text = { Text(if (option == null) inheritLabel.orEmpty() else throttleLabel(option)) },
-            trailingIcon = { if (option == selected) Icon(Icons.Filled.Check, contentDescription = null) },
-            onClick = { onPick(option) },
-            // The check mark alone says nothing to a screen reader.
-            modifier = Modifier.semantics { this.selected = option == selected },
-        )
-    }
+
+    @Composable
+    fun option(option: Int?) = DropdownMenuItem(
+        text = { Text(if (option == null) inheritLabel.orEmpty() else throttleLabel(option)) },
+        trailingIcon = { if (option == selected) Icon(Icons.Filled.Check, contentDescription = null) },
+        onClick = { onPick(option) },
+        // The check mark alone says nothing to a screen reader.
+        modifier = Modifier.semantics { this.selected = option == selected },
+    )
+
+    (inherit + listOfNotNull(INSTANT.takeIf { offerInstant }) + intervals).forEach { option(it) }
+    DropdownMenuItem(text = { Text(stringResource(R.string.throttle_custom)) }, onClick = onCustom)
+    if (offerMuted) option(MUTED)
+}
+
+/** Any interval within [THROTTLE_RANGE], typed as hours and minutes. [initial] prefills it when it is an interval. */
+@Composable
+fun CustomThrottleDialog(initial: Int?, onConfirm: (Int) -> Unit, onDismiss: () -> Unit) {
+    val start = initial?.takeIf { it in THROTTLE_RANGE }
+    var hours by rememberSaveable { mutableStateOf(start?.let { it / 60 }?.takeIf { it > 0 }?.toString().orEmpty()) }
+    var minutes by rememberSaveable { mutableStateOf(start?.let { it % 60 }?.takeIf { it > 0 }?.toString().orEmpty()) }
+    val value = customThrottle(hours, minutes)
+    val typed = hours.isNotBlank() || minutes.isNotBlank()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.throttle_custom_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    val numbers = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    OutlinedTextField(
+                        value = hours,
+                        onValueChange = { text -> hours = text.filter(Char::isDigit).take(2) },
+                        label = { Text(stringResource(R.string.throttle_custom_hours)) },
+                        singleLine = true,
+                        keyboardOptions = numbers,
+                        isError = typed && value == null,
+                        modifier = Modifier.weight(1f),
+                    )
+                    OutlinedTextField(
+                        value = minutes,
+                        onValueChange = { text -> minutes = text.filter(Char::isDigit).take(4) },
+                        label = { Text(stringResource(R.string.throttle_custom_minutes)) },
+                        singleLine = true,
+                        keyboardOptions = numbers,
+                        isError = typed && value == null,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                // The one thing the fields cannot say themselves; red only once something invalid was typed.
+                Text(
+                    stringResource(R.string.throttle_custom_range),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (typed && value == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { value?.let(onConfirm) }, enabled = value != null) { Text(stringResource(R.string.rules_save)) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.rules_cancel)) } },
+    )
 }
 
 @Composable

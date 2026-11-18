@@ -112,6 +112,11 @@
     <string name="throttle_not_held">not held</string>
     <string name="throttle_muted">Muted</string>
     <string name="throttle_muted_lower">muted</string>
+    <string name="throttle_custom">Custom…</string>
+    <string name="throttle_custom_title">Custom interval</string>
+    <string name="throttle_custom_hours">Hours</string>
+    <string name="throttle_custom_minutes">Minutes</string>
+    <string name="throttle_custom_range">5 min to 24 h</string>
 
     <!-- Apps & throttles screen -->
     <string name="rules_title">Apps &amp; throttles</string>
@@ -184,6 +189,8 @@
     <string name="history_yesterday">Yesterday</string>
     <string name="history_held">Held</string>
     <string name="history_muted">Muted</string>
+    <string name="history_muted_count">Muted · %1$d</string>
+    <string name="focus_muted">Muted · %1$d</string>
     <string name="history_held_delivered">Held · delivered %1$s</string>
     <string name="history_banner_delivered">Digest from %1$s</string>
     <string name="history_all_history">All history</string>

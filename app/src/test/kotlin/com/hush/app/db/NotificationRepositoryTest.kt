@@ -69,6 +69,30 @@ class NotificationRepositoryTest {
     }
 
     @Test
+    fun `muted rows can be listed, counted, filtered in History, and turned back into held rows - and only they`() = runTest {
+        repo.insert(event("m1", held = true, postTime = 10, packageName = "com.example.alpha"), muted = true)
+        repo.insert(event("m2", held = true, postTime = 20, packageName = "com.example.beta"), muted = true)
+        repo.insert(event("h", held = true, postTime = 30))
+        repo.insert(event("d", held = true, postTime = 40))
+        repo.insert(event("p", postTime = 50))
+        repo.markDelivered(listOf("d"), deliveredAt = 1_000)
+
+        assertEquals(listOf("m1", "m2"), repo.selectMuted().map { it.id })
+        assertEquals(2L, repo.countMuted().first())
+        assertEquals(listOf("m2", "m1"), repo.selectHistory("", null, null, 10, mutedOnly = true).first().map { it.id })
+        assertEquals(listOf("m2"), repo.selectHistory("", "com.example.beta", null, 10, mutedOnly = true).first().map { it.id })
+        assertEquals(2L, repo.countHistory("", null, null, mutedOnly = true).first())
+        assertEquals(5L, repo.countHistory("", null, null).first())
+
+        repo.unmute(listOf("m1", "d", "p", "h"))
+
+        assertEquals(listOf("m1", "h"), repo.selectHeldUndelivered().map { it.id }, "the muted row waits for a digest again")
+        assertEquals(listOf("m2"), repo.selectMuted().map { it.id })
+        assertEquals(listOf("d"), repo.selectHeldBatch(1_000).map { it.id }, "a delivered row is never reopened")
+        repo.unmute(emptyList()) // no-op, must not throw
+    }
+
+    @Test
     fun `markSynced and markDelivered handle more ids than SQLite's 999 variable cap`() = runTest {
         val ids = (1..1001).map { "id-$it" }
         ids.forEachIndexed { i, id -> repo.insert(event(id, postTime = i.toLong(), held = true)) }

@@ -45,10 +45,12 @@ ORDER BY post_time DESC
 LIMIT :limit;
 
 -- The History list: POSTED rows only, newest first, every filter optional. `:q` arrives LIKE-escaped;
--- '' means "no search". `:chat` is a chat key, i.e. COALESCE(conversation_id, title).
+-- '' means "no search". `:chat` is a chat key, i.e. COALESCE(conversation_id, title). `:mutedOnly` = 1
+-- keeps only the rows that are muted right now (see selectMuted).
 selectHistory:
 SELECT * FROM notification_event
 WHERE event = 'POSTED'
+  AND (:mutedOnly = 0 OR (held = 1 AND delivered_at = 0))
   AND (:packageName IS NULL OR package_name = :packageName)
   AND (:chat IS NULL OR COALESCE(conversation_id, title) = :chat)
   AND (:q = ''
@@ -63,6 +65,7 @@ LIMIT :limit;
 countHistory:
 SELECT COUNT(*) FROM notification_event
 WHERE event = 'POSTED'
+  AND (:mutedOnly = 0 OR (held = 1 AND delivered_at = 0))
   AND (:packageName IS NULL OR package_name = :packageName)
   AND (:chat IS NULL OR COALESCE(conversation_id, title) = :chat)
   AND (:q = ''
@@ -100,6 +103,22 @@ ORDER BY post_time ASC;
 
 markDelivered:
 UPDATE notification_event SET delivered_at = :ts WHERE id IN :ids;
+
+-- Muted rows: hidden by a "Muted" rule and written already closed, with the delivery stamp 0
+-- (NotificationEvent.MUTED_AT). They stay like this for as long as their rule says "Muted".
+selectMuted:
+SELECT * FROM notification_event
+WHERE held = 1 AND delivered_at = 0
+ORDER BY post_time ASC;
+
+countMuted:
+SELECT COUNT(*) FROM notification_event
+WHERE held = 1 AND delivered_at = 0 AND event = 'POSTED';
+
+-- Turns muted rows back into ordinary held rows. Guarded, so it can never reopen a row that was delivered.
+unmute:
+UPDATE notification_event SET delivered_at = NULL
+WHERE held = 1 AND delivered_at = 0 AND id IN :ids;
 
 -- Everything a digest covers: held rows delivered at or after its `since` (a digest that replaced
 -- an unread one keeps the older one's `since`, so the range can span several delivery runs).

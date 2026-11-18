@@ -48,7 +48,13 @@ sealed interface HistoryMode {
      * Browsing the archive, optionally narrowed by a (debounced) search [query], one [app] package and,
      * inside that app, one [chat] (a [NotificationEvent.chatKey]).
      */
-    data class Browse(val query: String = "", val app: String? = null, val chat: String? = null) : HistoryMode
+    data class Browse(
+        val query: String = "",
+        val app: String? = null,
+        val chat: String? = null,
+        /** Only what is muted right now. */
+        val muted: Boolean = false,
+    ) : HistoryMode
 
     /**
      * The digest deep link: the held rows delivered at or after [deliveredAt]. Normally that is one
@@ -85,6 +91,8 @@ data class HistoryUiState(
     val chatThrottle: ChatThrottle? = null,
     /** The real cause of a chat rule that could not be saved, until dismissed. */
     val ruleError: String? = null,
+    /** How many notifications are muted right now; the "Muted" filter is offered while there are any. */
+    val mutedCount: Int = 0,
 )
 
 /** Rows tagged with the mode they were loaded for, so the state never pairs a new mode with stale rows. */
@@ -97,7 +105,7 @@ private data class Page(val mode: HistoryMode, val rows: List<NotificationEvent>
  */
 private data class Paging(val mode: HistoryMode? = null, val showAll: Boolean = false, val limit: Int = HistoryViewModel.PAGE)
 
-private data class Filters(val app: String? = null, val chat: String? = null)
+private data class Filters(val app: String? = null, val chat: String? = null, val muted: Boolean = false)
 
 private data class Local(
     val expandedId: String? = null,
@@ -145,8 +153,22 @@ class HistoryViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
     private val mode: Flow<HistoryMode> = combine(signals.digestLink, debouncedQuery, filters) { link, q, f ->
-        link?.let { HistoryMode.HeldBatch(it.deliveredAt) } ?: HistoryMode.Browse(q, f.app, f.chat)
+        link?.let { HistoryMode.HeldBatch(it.deliveredAt) } ?: HistoryMode.Browse(q, f.app, f.chat, f.muted)
     }.distinctUntilChanged()
+
+    init {
+        // "Muted · N" on the Focus screen: show exactly those, whatever was filtered or linked before.
+        viewModelScope.launch {
+            signals.showMuted.collect { asked ->
+                if (asked) {
+                    signals.showMuted.value = false
+                    signals.digestLink.value = null
+                    _query.value = ""
+                    filters.value = Filters(muted = true)
+                }
+            }
+        }
+    }
 
     // No side effects in here: `state` stops collecting 5 s after Hush leaves the screen and starts again on
     // return, and what the owner had unrolled or filtered must still be there.
@@ -158,7 +180,7 @@ class HistoryViewModel(
         .flatMapLatest { app -> if (app == null) flowOf(emptyList()) else repo.selectChats(app) }
 
     val state: StateFlow<HistoryUiState> =
-        combine(page, repo.selectApps(), chats, local, settings.settings) { page, apps, chats, loc, s ->
+        combine(page, repo.selectApps(), combine(chats, repo.countMuted(), ::Pair), local, settings.settings) { page, apps, (chats, muted), loc, s ->
             val more = page.rows.size < page.total
             HistoryUiState(
                 loading = false,
@@ -175,6 +197,7 @@ class HistoryViewModel(
                 openFailure = loc.openFailure,
                 chatThrottle = loc.throttleFor?.let { chatThrottleOf(it, s) },
                 ruleError = loc.ruleError,
+                mutedCount = muted.toInt(),
             )
             // The initial value is the loading state; after that the last state stays up until fresh rows arrive.
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HistoryUiState())
@@ -189,8 +212,8 @@ class HistoryViewModel(
                 emit(Page(mode, if (paging.showAll) all else all.take(PREVIEW), all.size, paging.showAll))
             }
             is HistoryMode.Browse -> combine(
-                repo.selectHistory(mode.query, mode.app, mode.chat, limit),
-                repo.countHistory(mode.query, mode.app, mode.chat),
+                repo.selectHistory(mode.query, mode.app, mode.chat, limit, mode.muted),
+                repo.countHistory(mode.query, mode.app, mode.chat, mode.muted),
             ) { rows, total -> Page(mode, rows, total.toInt(), paging.showAll) }
         }
     }
@@ -202,7 +225,7 @@ class HistoryViewModel(
         is HistoryMode.HeldBatch -> EmptyKind.BATCH_EMPTY
         is HistoryMode.Browse -> when {
             mode.query.isNotEmpty() -> EmptyKind.NO_MATCHES
-            mode.app != null -> EmptyKind.APP_EMPTY
+            mode.app != null || mode.muted -> EmptyKind.APP_EMPTY
             !listenerOn -> EmptyKind.LISTENER_OFF
             else -> EmptyKind.NO_NOTIFICATIONS
         }
@@ -214,7 +237,12 @@ class HistoryViewModel(
 
     /** Narrows to one app (null = all apps). A chat belongs to its app, so changing the app drops the chat. */
     fun setAppFilter(packageName: String?) {
-        filters.update { if (it.app == packageName) it else Filters(app = packageName) }
+        filters.update { if (it.app == packageName) it else it.copy(app = packageName, chat = null) }
+    }
+
+    /** Narrows to what is muted right now; combines with the app and chat filters. */
+    fun setMutedFilter(on: Boolean) {
+        filters.update { it.copy(muted = on) }
     }
 
     /** Narrows to one chat of the already selected app (null = all its chats). */

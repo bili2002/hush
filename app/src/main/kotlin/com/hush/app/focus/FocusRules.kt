@@ -33,14 +33,33 @@ data class FocusRules(
 const val INSTANT = 0
 
 /**
- * Throttle value meaning "hidden while Focus is on and never put in a digest". The notification is
- * still recorded and stays in History. Below [INSTANT] on purpose: every "is there an interval to
+ * Throttle value meaning "hidden while Focus is on and kept out of digests". The notification is
+ * still recorded and stays in History; it is delivered after all if its rule later becomes
+ * something else while Focus is on. Below [INSTANT] on purpose: every "is there an interval to
  * wait for" check (`> INSTANT`) is false for it without knowing about it.
  */
 const val MUTED = -1
 
-/** The intervals offered everywhere a throttle is picked. Each divides the next, so their slot boundaries nest. */
-val THROTTLE_CHOICES = listOf(15, 30, 60, 120, 240)
+/** The intervals offered everywhere a throttle is picked; "Custom…" takes any other within [THROTTLE_RANGE]. */
+val THROTTLE_CHOICES = listOf(15, 30, 60, 120, 180, 240, 360, 480, 720)
+
+/**
+ * What a custom interval may be, in minutes. Below five minutes a digest is no different from the
+ * notifications themselves (and the alarm cannot keep up in Doze); above a day the slots, which
+ * restart at local midnight, stop meaning anything.
+ */
+val THROTTLE_RANGE = 5..24 * 60
+
+/**
+ * The interval typed into the custom dialog as [hours] and [minutes] (either may be blank), or
+ * null when it is not a number or outside [THROTTLE_RANGE].
+ */
+fun customThrottle(hours: String, minutes: String): Int? {
+    val h = hours.trim().ifEmpty { "0" }.toIntOrNull() ?: return null
+    val m = minutes.trim().ifEmpty { "0" }.toIntOrNull() ?: return null
+    if (h !in 0..24 || m !in 0..THROTTLE_RANGE.last) return null
+    return (h * 60 + m).takeIf { it in THROTTLE_RANGE }
+}
 
 fun Settings.categoryOf(packageName: String): FocusCategory? =
     rules.appCategory[packageName]?.let { id -> rules.categories.firstOrNull { it.id == id } }

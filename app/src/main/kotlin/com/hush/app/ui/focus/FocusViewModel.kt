@@ -88,6 +88,8 @@ data class FocusUiState(
     /** Why Do Not Disturb could not be switched for the active profile. */
     val dndError: String? = null,
     val heldCount: Long = 0,
+    /** Notifications that are muted right now; shown with a way to see them. */
+    val mutedCount: Long = 0,
     /** Epoch millis of the next digest; the screen formats it in the device zone. */
     val nextSlotAt: Long? = null,
     /** The non-empty groups of held apps with their resolved interval, for the summary card. */
@@ -157,8 +159,8 @@ class FocusViewModel(
     }
 
     val state: StateFlow<FocusUiState> =
-        combine(settings.settings, repo.heldUndelivered(), system, ticker, local) { s, held, sys, now, loc ->
-            build(s, held, sys, now, loc)
+        combine(settings.settings, repo.heldUndelivered(), system, ticker, combine(local, repo.countMuted(), ::Pair)) { s, held, sys, now, (loc, muted) ->
+            build(s, held, sys, now, loc).copy(mutedCount = muted)
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), FocusUiState())
 
     init {
@@ -270,6 +272,12 @@ class FocusViewModel(
 
     fun editProfile(id: String) {
         signals.requestNavigation(Routes.focusRules(id))
+    }
+
+    /** History, narrowed to what is muted right now. */
+    fun showMuted() {
+        signals.showMuted.value = true
+        signals.requestNavigation(Routes.HISTORY)
     }
 
     fun openSchedule() {

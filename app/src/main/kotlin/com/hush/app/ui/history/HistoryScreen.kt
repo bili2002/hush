@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -80,6 +81,7 @@ data class HistoryCallbacks(
     val onQueryChange: (String) -> Unit = {},
     val onAppFilter: (String?) -> Unit = {},
     val onChatFilter: (String?) -> Unit = {},
+    val onMutedFilter: (Boolean) -> Unit = {},
     val onOpen: (NotificationEvent) -> Unit = {},
     val onToggleExpand: (String) -> Unit = {},
     val onShowAll: () -> Unit = {},
@@ -116,6 +118,7 @@ fun HistoryScreen(vm: HistoryViewModel = hiltViewModel()) {
             onQueryChange = vm::setQuery,
             onAppFilter = vm::setAppFilter,
             onChatFilter = vm::setChatFilter,
+            onMutedFilter = vm::setMutedFilter,
             onOpen = vm::open,
             onToggleExpand = vm::toggleExpanded,
             onShowAll = vm::showAll,
@@ -172,8 +175,12 @@ fun HistoryContent(
         } else {
             SearchBar(query = query, onQueryChange = callbacks.onQueryChange)
             // Also shown with no apps left (after a purge) while a filter is set, or there would be no way to clear it.
-            if (browse != null && (state.apps.isNotEmpty() || browse.app != null)) {
+            if (browse != null && (state.apps.isNotEmpty() || browse.app != null || browse.muted)) {
                 FilterBar(
+                    // Offered while something is muted, and kept while it is on so that it can be switched off.
+                    muted = browse.muted.takeIf { it || state.mutedCount > 0 },
+                    mutedCount = state.mutedCount,
+                    onMuted = callbacks.onMutedFilter,
                     app = browse.app,
                     appLabel = appLabel,
                     chatTitle = chatTitle,
@@ -288,6 +295,10 @@ private fun SearchBar(query: String, onQueryChange: (String) -> Unit) {
  */
 @Composable
 private fun FilterBar(
+    /** Null = the "Muted" chip is not shown. */
+    muted: Boolean?,
+    mutedCount: Int,
+    onMuted: (Boolean) -> Unit,
     app: String?,
     appLabel: String?,
     chatTitle: String?,
@@ -319,6 +330,13 @@ private fun FilterBar(
                 active = chatTitle != null,
                 onClick = onPickChat,
                 onClear = onClearChat,
+            )
+        }
+        if (muted != null) {
+            FilterChip(
+                selected = muted,
+                onClick = { onMuted(!muted) },
+                label = { Text(stringResource(R.string.history_muted_count, mutedCount)) },
             )
         }
     }

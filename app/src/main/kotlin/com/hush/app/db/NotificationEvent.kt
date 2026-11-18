@@ -26,7 +26,7 @@ data class NotificationEvent(
     val conversationTitle: String? = null,
 ) {
     /**
-     * What "the same chat" means everywhere (History filter, chat list, Focus chat rules): the
+     * What "the same chat" means everywhere (History filter, chat list): the
      * conversation id, else the title. Mirrors `COALESCE(conversation_id, title)` in Notifications.sq,
      * so rows captured before conversations were recorded still group by title.
      */

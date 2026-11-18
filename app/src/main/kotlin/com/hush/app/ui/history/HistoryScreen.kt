@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -46,6 +47,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -58,6 +60,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -164,7 +167,8 @@ fun HistoryContent(
             DigestBanner(deliveredAt = batch.deliveredAt, zone = zone, onAllHistory = callbacks.onAllHistory)
         } else {
             SearchBar(query = query, onQueryChange = callbacks.onQueryChange)
-            if (state.apps.isNotEmpty() && browse != null) {
+            // Also shown with no apps left (after a purge) while a filter is set, or there would be no way to clear it.
+            if (browse != null && (state.apps.isNotEmpty() || browse.app != null)) {
                 FilterBar(
                     app = browse.app,
                     appLabel = appLabel,
@@ -333,7 +337,8 @@ private fun FilterDropChip(
                 Icon(
                     Icons.Filled.Close,
                     contentDescription = stringResource(R.string.history_clear_filter),
-                    modifier = Modifier.size(24.dp).clip(CircleShape).clickable(onClick = onClear).padding(3.dp),
+                    // As tall as the chip itself, so a tap meant to clear does not land on the chip body and open the sheet.
+                    modifier = Modifier.size(32.dp).clip(CircleShape).clickable(onClick = onClear).padding(7.dp),
                 )
             } else {
                 Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
@@ -364,7 +369,8 @@ private fun FilterSheet(
 ) {
     var search by rememberSaveable { mutableStateOf("") }
     val shown = filterSheetItems(items, search)
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    // Fully expanded from the start: half height plus the keyboard would leave no room for the list.
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 24.dp))
         OutlinedTextField(
             value = search,
@@ -415,7 +421,7 @@ private fun SheetRow(label: String, count: Long?, selected: Boolean, iconPackage
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
             .padding(horizontal = 24.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

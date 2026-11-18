@@ -82,6 +82,15 @@ class NotificationIngestTest {
     }
 
     @Test
+    fun `the tap target of a notification recorded by the backfill is remembered too`() = runTest {
+        val target = PendingIntent.getActivity(appContext(), 1, Intent("com.example.OPEN"), PendingIntent.FLAG_IMMUTABLE)
+
+        ingest.onBackfill(listOf(sbn(notification { it.setContentIntent(target) })))
+
+        assertEquals(target, tapTargets.find(rows().single()))
+    }
+
+    @Test
     fun `HOLD inserts a held row then fires cancel with the key`() = runTest {
         gate.decision = Decision.HOLD
         val s = sbn()

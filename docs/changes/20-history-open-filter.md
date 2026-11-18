@@ -25,6 +25,9 @@ History rows now behave like the shade (#20):
 Needs device test: opening a chat from a visible Hush on Android 14+ (the background-activity
 opt-in), which apps publish shortcut ids, sheet ergonomics with the keyboard up.
 
+Follow-ups not done here: opening a row does not dismiss the notification it came from if that is
+still in the shade; the chat sheet lists title-keyed "chats" for apps that are not messengers.
+
 Known limits: rows captured before v2 have no conversation id, so for up to 30 days an active
 chat can appear twice in the chat sheet (once by id, once by its old title).
 
@@ -58,3 +61,15 @@ thing when two unrelated notifications have the same title, so that stays strict
 What: collapsed = `LIMIT 10` plus a `COUNT(*)` with the same WHERE; "Show all" switches the limit
 to the 200-row page.
 Why: the count on the button is exact, and the collapsed view never loads rows it will not show.
+
+**[2026-11-18] What is unrolled or filtered survives leaving Hush**
+What: paging is tagged with the mode it belongs to and nothing in the collected pipeline resets
+it; the debounced query is a hot `StateFlow`; the state has no "loading" re-entry on re-collection.
+Why: tapping a row sends the owner to another app, which stops the History collectors after 5 s.
+Coming back has to show the same list (same filter, still unrolled), not a spinner and the top ten.
+
+**[2026-11-18] Only activity tap targets are fired**
+What: on Android 12+ a cached `contentIntent` that is a broadcast or service is skipped in favour
+of the launcher, and the row does not claim it opens the conversation.
+Why: such a trampoline may only start an activity when the system itself delivers the tap; sent
+from Hush it "succeeds" and shows nothing, which would be a silent failure.

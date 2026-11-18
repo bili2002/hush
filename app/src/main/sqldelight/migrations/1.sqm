@@ -1,4 +1,5 @@
 -- v1 → v2: conversation identity (issue #20). Both columns are nullable, so old rows stay valid.
+-- No index: chats are looked up as COALESCE(conversation_id, title) inside one package, which
+-- notification_event_package_post_time already narrows.
 ALTER TABLE notification_event ADD COLUMN conversation_id TEXT;
 ALTER TABLE notification_event ADD COLUMN conversation_title TEXT;
-CREATE INDEX notification_event_chat ON notification_event(package_name, conversation_id, post_time);

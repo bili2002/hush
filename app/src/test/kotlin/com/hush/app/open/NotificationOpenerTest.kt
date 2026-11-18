@@ -81,6 +81,17 @@ class NotificationOpenerTest {
     }
 
     @Test
+    fun `a broadcast target cannot open a screen, so the launcher is used and no chat is promised`() {
+        installLauncher("com.example.alpha")
+        val row = event("a")
+        targets.remember(row, PendingIntent.getBroadcast(ctx, 7, Intent("com.example.TRAMPOLINE"), PendingIntent.FLAG_IMMUTABLE))
+
+        assertFalse(opener.hasOriginalTarget(row))
+        assertEquals(OpenResult.APP, opener.open(row))
+        assertEquals("com.example.alpha.MainActivity", assertNotNull(app.nextStartedActivity).component?.className)
+    }
+
+    @Test
     fun `no target and no launcher is a failure, and nothing is started`() {
         assertEquals(OpenResult.FAILED, opener.open(event("a", packageName = "com.example.gone")))
         assertNull(app.nextStartedActivity)

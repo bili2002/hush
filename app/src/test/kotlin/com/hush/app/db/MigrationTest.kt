@@ -1,5 +1,6 @@
 package com.hush.app.db
 
+import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.hush.app.testing.event
 import com.hush.app.testing.fixedClock
@@ -65,6 +66,31 @@ class MigrationTest {
         assertEquals("Sender A", rows[1].chatKey, "a pre-migration row still groups by its title")
         assertEquals(true, rows[1].held, "held state is untouched by the upgrade")
         assertEquals(listOf("old"), repo.selectHeldUndelivered().map { it.id })
+    }
+
+    /** Tables and indexes, plus every table's columns in order: what must not differ between the two ways to reach v2. */
+    private fun shape(driver: JdbcSqliteDriver): List<String> {
+        fun rows(sql: String, columns: Int): List<String> = driver.executeQuery(null, sql, { c ->
+            val out = mutableListOf<String>()
+            while (c.next().value) out += (0 until columns).joinToString("|") { c.getString(it).orEmpty() }
+            QueryResult.Value(out)
+        }, 0).value
+        val objects = rows("SELECT type, name, tbl_name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name", 3)
+        // cid | name | type | notnull | default | pk
+        val columns = rows("PRAGMA table_info(notification_event)", 6)
+        return objects + columns
+    }
+
+    @Test
+    fun `a migrated database has the same tables, columns and indexes as a fresh one`() {
+        Class.forName("org.sqlite.JDBC")
+        val migrated = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        v1.dropLast(1).forEach { migrated.execute(null, it, 0) }
+        HushDatabase.Schema.migrate(migrated, 1, HushDatabase.Schema.version)
+        val fresh = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        HushDatabase.Schema.create(fresh)
+
+        assertEquals(shape(fresh), shape(migrated))
     }
 
     @Test

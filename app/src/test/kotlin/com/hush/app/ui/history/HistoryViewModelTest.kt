@@ -21,11 +21,15 @@ import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Rule
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class HistoryViewModelTest {
 
     @get:Rule
@@ -130,8 +134,12 @@ class HistoryViewModelTest {
         val vm = vm()
         assertTrue(vm.loaded().chats.isEmpty(), "no app selected, no chat list")
 
+        // A chat filter without an app is ignored: the next mode (forced by a search) still has no chat.
         vm.setChatFilter("c1")
-        assertNull((vm.state.value.mode as HistoryMode.Browse).chat, "a chat filter without an app is ignored")
+        vm.setQuery("Sender")
+        assertNull((vm.state.first { (it.mode as? HistoryMode.Browse)?.query == "Sender" }.mode as HistoryMode.Browse).chat)
+        vm.setQuery("")
+        vm.state.first { (it.mode as? HistoryMode.Browse)?.query == "" }
 
         vm.setAppFilter(pkg)
         val app = vm.state.first { it.chats.isNotEmpty() }
@@ -303,12 +311,11 @@ class HistoryViewModelTest {
         val vm = vm()
         assertEquals(HistoryViewModel.PREVIEW, vm.loaded().ids().size)
 
+        // Load more does nothing while collapsed: had it grown the limit, the unrolled list below would hold 2 pages' worth.
         vm.loadMore()
-        assertEquals(HistoryViewModel.PREVIEW, vm.state.value.ids().size, "load more does nothing while collapsed")
-
         vm.showAll()
-        val unrolled = vm.state.first { it.ids().size == page }
-        assertTrue(!unrolled.collapsed)
+        val unrolled = vm.state.first { !it.collapsed }
+        assertEquals(page, unrolled.ids().size)
         assertTrue(unrolled.canLoadMore)
 
         vm.loadMore()
@@ -332,6 +339,45 @@ class HistoryViewModelTest {
         assertEquals(HistoryViewModel.PREVIEW, searched.ids().size)
         assertEquals(30, searched.total)
         assertTrue(searched.collapsed)
+    }
+
+    @Test
+    fun `coming back after Hush was in the background keeps the filter and the unrolled list`() = runTest {
+        repeat(30) { i -> repo.insert(event("r$i", postTime = 1_000L + i)) }
+        val vm = vm()
+        vm.loaded()
+        vm.setQuery("title")
+        vm.state.first { (it.mode as? HistoryMode.Browse)?.query == "title" }
+        vm.showAll()
+        assertEquals(30, vm.state.first { !it.collapsed }.ids().size)
+
+        // Nobody collects for longer than the 5 s grace (the tapped app is in front): the upstream is torn down.
+        advanceTimeBy(6_000)
+        runCurrent()
+        // Back in Hush. A new row forces a fresh emission, so this is the re-collected state, not the cached one.
+        repo.insert(event("new", postTime = 9_000L))
+
+        val back = vm.state.first { it.total == 31 }
+        assertEquals(HistoryMode.Browse(query = "title"), back.mode)
+        assertEquals(31, back.ids().size, "still unrolled")
+        assertTrue(!back.collapsed && !back.loading)
+    }
+
+    @Test
+    fun `show all and load more belong to the mode they happened in`() = runTest {
+        repeat(30) { i -> repo.insert(event("a$i", packageName = "com.example.alpha", postTime = 1_000L + i)) }
+        repeat(30) { i -> repo.insert(event("b$i", packageName = "com.example.beta", postTime = 5_000L + i)) }
+        val vm = vm()
+        vm.loaded()
+        vm.setAppFilter("com.example.alpha")
+        vm.state.first { (it.mode as? HistoryMode.Browse)?.app == "com.example.alpha" }
+        vm.showAll()
+        assertEquals(30, vm.state.first { !it.collapsed }.ids().size)
+
+        vm.setAppFilter("com.example.beta")
+        val beta = vm.state.first { (it.mode as? HistoryMode.Browse)?.app == "com.example.beta" }
+        assertEquals(HistoryViewModel.PREVIEW, beta.ids().size)
+        assertTrue(beta.collapsed)
     }
 
     @Test

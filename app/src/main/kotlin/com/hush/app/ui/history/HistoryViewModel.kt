@@ -29,7 +29,6 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 
@@ -73,8 +72,12 @@ data class HistoryUiState(
 /** Rows tagged with the mode they were loaded for, so the state never pairs a new mode with stale rows. */
 private data class Page(val mode: HistoryMode, val rows: List<NotificationEvent>, val total: Int, val showAll: Boolean)
 
-/** How much of the current mode is shown: the short preview, or the unrolled list up to [limit] rows. */
-private data class Paging(val showAll: Boolean = false, val limit: Int = HistoryViewModel.PAGE)
+/**
+ * How much of [mode] is shown: the short preview, or the unrolled list up to [limit] rows. Tagged
+ * with its mode so that "show all" / "load more" only ever apply to the mode they happened in: a
+ * paging whose tag is not the current mode reads as the default (the preview).
+ */
+private data class Paging(val mode: HistoryMode? = null, val showAll: Boolean = false, val limit: Int = HistoryViewModel.PAGE)
 
 private data class Filters(val app: String? = null, val chat: String? = null)
 
@@ -108,47 +111,42 @@ class HistoryViewModel(
     private val paging = MutableStateFlow(Paging())
     private val local = MutableStateFlow(Local(listenerEnabled = systemStatus.listenerEnabled()))
 
-    private val mode: Flow<HistoryMode> = combine(
-        signals.digestLink,
-        _query.debounce(debounceMillis).onStart { emit("") }.map { it.trim() }.distinctUntilChanged(),
-        filters,
-    ) { link, q, f ->
+    // Hot, so a collector that comes back (Hush reopened after the tapped app) sees the current query at once
+    // instead of an empty one for the length of the debounce.
+    private val debouncedQuery: StateFlow<String> = _query.debounce(debounceMillis).map { it.trim() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
+    private val mode: Flow<HistoryMode> = combine(signals.digestLink, debouncedQuery, filters) { link, q, f ->
         link?.let { HistoryMode.HeldBatch(it.deliveredAt) } ?: HistoryMode.Browse(q, f.app, f.chat)
     }.distinctUntilChanged()
 
-    private val page: Flow<Page?> = mode
-        .flatMapLatest { m ->
-            // A new mode starts over at the preview; "show all" / "load more" belong to the mode they happened in.
-            paging.value = Paging()
-            paging.flatMapLatest { p -> source(m, p) }
-        }
-        .map<Page, Page?> { it }
-        .onStart { emit(null) }
+    // No side effects in here: `state` stops collecting 5 s after Hush leaves the screen and starts again on
+    // return, and what the owner had unrolled or filtered must still be there.
+    private val page: Flow<Page> = combine(mode, paging) { m, p -> m to (p.takeIf { it.mode == m } ?: Paging(m)) }
+        .distinctUntilChanged()
+        .flatMapLatest { (m, p) -> source(m, p) }
 
     private val chats: Flow<List<ChatSummary>> = filters.map { it.app }.distinctUntilChanged()
         .flatMapLatest { app -> if (app == null) flowOf(emptyList()) else repo.selectChats(app) }
 
     val state: StateFlow<HistoryUiState> =
         combine(page, repo.selectApps(), chats, local) { page, apps, chats, loc ->
-            if (page == null) {
-                HistoryUiState(loading = true, apps = apps, chats = chats, listenerEnabled = loc.listenerEnabled)
-            } else {
-                val more = page.rows.size < page.total
-                HistoryUiState(
-                    loading = false,
-                    mode = page.mode,
-                    days = groupByDay(page.rows),
-                    apps = apps,
-                    chats = chats,
-                    expandedId = loc.expandedId,
-                    empty = if (page.rows.isEmpty()) emptyKind(page.mode, loc.listenerEnabled) else null,
-                    listenerEnabled = loc.listenerEnabled,
-                    total = page.total,
-                    collapsed = more && !page.showAll,
-                    canLoadMore = more && page.showAll,
-                    openFailure = loc.openFailure,
-                )
-            }
+            val more = page.rows.size < page.total
+            HistoryUiState(
+                loading = false,
+                mode = page.mode,
+                days = groupByDay(page.rows),
+                apps = apps,
+                chats = chats,
+                expandedId = loc.expandedId,
+                empty = if (page.rows.isEmpty()) emptyKind(page.mode, loc.listenerEnabled) else null,
+                listenerEnabled = loc.listenerEnabled,
+                total = page.total,
+                collapsed = more && !page.showAll,
+                canLoadMore = more && page.showAll,
+                openFailure = loc.openFailure,
+            )
+            // The initial value is the loading state; after that the last state stays up until fresh rows arrive.
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HistoryUiState())
 
     private fun source(mode: HistoryMode, paging: Paging): Flow<Page> {
@@ -210,13 +208,15 @@ class HistoryViewModel(
         local.update { it.copy(expandedId = if (it.expandedId == id) null else id) }
     }
 
-    /** Unrolls the 10-row preview into the full, paged list. */
+    /** Unrolls the 10-row preview of the mode on screen into the full, paged list. */
     fun showAll() {
-        paging.update { it.copy(showAll = true) }
+        val shown = state.value
+        if (shown.collapsed) paging.value = Paging(shown.mode, showAll = true)
     }
 
     fun loadMore() {
-        if (state.value.canLoadMore) paging.update { it.copy(limit = it.limit + PAGE) }
+        val shown = state.value
+        if (shown.canLoadMore) paging.update { p -> if (p.mode == shown.mode) p.copy(limit = p.limit + PAGE) else p }
     }
 
     /** Whether tapping [event] still lands on the notification's own target (the chat) rather than just the app. */

@@ -29,7 +29,6 @@ CREATE INDEX notification_event_post_time ON notification_event(post_time);
 CREATE INDEX notification_event_package_post_time ON notification_event(package_name, post_time);
 CREATE INDEX notification_event_unsynced ON notification_event(post_time) WHERE synced_at IS NULL;
 CREATE INDEX notification_event_held_undelivered ON notification_event(post_time) WHERE held = 1 AND delivered_at IS NULL;
-CREATE INDEX notification_event_chat ON notification_event(package_name, conversation_id, post_time);
 
 -- Ids are deterministic (see the listener issue), so a replayed event is a silent no-op.
 insert:

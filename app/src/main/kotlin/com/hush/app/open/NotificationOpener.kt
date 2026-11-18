@@ -42,17 +42,25 @@ class AndroidNotificationOpener @Inject constructor(
     private val tapTargets: TapTargets,
 ) : NotificationOpener {
 
-    override fun hasOriginalTarget(event: NotificationEvent): Boolean = tapTargets.find(event) != null
+    override fun hasOriginalTarget(event: NotificationEvent): Boolean = tapTargets.find(event)?.let(::opensScreen) == true
 
     override fun open(event: NotificationEvent): OpenResult {
         val target = tapTargets.find(event)
-        if (target != null) {
+        if (target != null && opensScreen(target)) {
             if (send(target)) return OpenResult.ORIGINAL
             // One-shot or revoked by its app: it will never work again.
             tapTargets.forget(event, target)
         }
         return if (launch(event.packageName)) OpenResult.APP else OpenResult.FAILED
     }
+
+    /**
+     * A broadcast or service target would be "sent" successfully and then show nothing: only the
+     * system's own notification tap lets such a trampoline start an activity. Those go to the
+     * launcher instead. Before Android 12 the kind cannot be asked, so the target is tried.
+     */
+    private fun opensScreen(target: PendingIntent): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.S || target.isActivity
 
     /**
      * Fires the other app's [PendingIntent]. Hush is the visible app when this runs (a History row
@@ -69,6 +77,10 @@ class AndroidNotificationOpener @Inject constructor(
         }
         true
     } catch (e: PendingIntent.CanceledException) {
+        false
+    } catch (e: RuntimeException) {
+        // Another app's token misbehaving must not take the screen (and the listener in this process) down.
+        Log.w(TAG, "tap target failed: ${e.javaClass.simpleName}")
         false
     }
 

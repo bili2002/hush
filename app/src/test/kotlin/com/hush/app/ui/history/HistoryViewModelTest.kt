@@ -1,6 +1,5 @@
 package com.hush.app.ui.history
 
-import androidx.lifecycle.viewModelScope
 import com.hush.app.db.EventType
 import com.hush.app.db.NotificationRepository
 import com.hush.app.db.ChatSummary
@@ -8,6 +7,7 @@ import com.hush.app.open.OpenResult
 import com.hush.app.testing.FakeOpener
 import com.hush.app.testing.FakeSystemStatus
 import com.hush.app.testing.MainDispatcherRule
+import com.hush.app.testing.cancelAndJoin
 import com.hush.app.testing.event
 import com.hush.app.testing.fixedClock
 import com.hush.app.testing.testRepository
@@ -20,7 +20,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.advanceTimeBy
@@ -45,7 +44,7 @@ class HistoryViewModelTest {
         HistoryViewModel(repo, system, signals, opener, ZoneOffset.UTC, debounceMillis = HistoryViewModel.DEBOUNCE_MILLIS).also { vms += it }
 
     @After
-    fun tearDown() = vms.forEach { it.viewModelScope.cancel() }
+    fun tearDown() = vms.forEach { it.cancelAndJoin() }
 
     private fun at(iso: String) = Instant.parse(iso).toEpochMilli()
 

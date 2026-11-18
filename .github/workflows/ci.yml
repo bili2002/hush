@@ -13,3 +13,14 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Server tests + app unit tests + debug APK
         run: ./gradlew :server:test :app:testDebugUnitTest :app:assembleDebug --no-daemon
+      # A failing test's stack trace is only in the HTML/XML report, not in the log.
+      - name: Keep test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            app/build/reports/tests
+            app/build/test-results
+            server/build/reports/tests
+          retention-days: 7

@@ -1,6 +1,5 @@
 package com.hush.app.ui.focus
 
-import androidx.lifecycle.viewModelScope
 import com.hush.app.db.NotificationRepository
 import com.hush.app.focus.DeliverResult
 import com.hush.app.settings.Settings
@@ -8,6 +7,7 @@ import com.hush.app.testing.FakeFocusActions
 import com.hush.app.testing.FakeSettingsStore
 import com.hush.app.testing.FakeSystemStatus
 import com.hush.app.testing.MainDispatcherRule
+import com.hush.app.testing.cancelAndJoin
 import com.hush.app.testing.event
 import com.hush.app.testing.testRepository
 import com.hush.app.ui.components.UiSignals
@@ -22,7 +22,6 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
@@ -59,7 +58,7 @@ class FocusViewModelTest {
     ).also { vms += it }
 
     @After
-    fun tearDown() = vms.forEach { it.viewModelScope.cancel() }
+    fun tearDown() = vms.forEach { it.cancelAndJoin() }
 
     private suspend fun FocusViewModel.loaded(): FocusUiState = state.first { !it.loading }
 

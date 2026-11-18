@@ -77,6 +77,7 @@ import com.hush.app.ui.components.HushCard
 import com.hush.app.ui.components.appNotificationSettingsIntent
 import com.hush.app.ui.components.findActivity
 import com.hush.app.ui.components.formatClock
+import com.hush.app.ui.components.formatDayClock
 import com.hush.app.ui.components.relativeAgo
 import com.hush.app.ui.components.startActivitySafely
 import com.hush.app.ui.components.throttleEvery
@@ -168,6 +169,7 @@ fun FocusContent(
     launchFailed: Boolean = false,
 ) {
     var dialog by rememberSaveable(stateSaver = ProfileDialogSaver) { mutableStateOf<ProfileDialog?>(null) }
+    var deleting by rememberSaveable { mutableStateOf<String?>(null) }
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -208,6 +210,7 @@ fun FocusContent(
             callbacks = callbacks,
             onNew = { copyOf -> dialog = ProfileDialog(renameId = null, name = "", copyOf = copyOf?.id) },
             onRename = { dialog = ProfileDialog(renameId = it.id, name = it.name, copyOf = null) },
+            onDelete = { deleting = it.id },
         )
 
         RulesSummaryCard(state.groups, state.chatRuleCount, callbacks.onManageRules)
@@ -215,6 +218,21 @@ fun FocusContent(
         state.checklist?.let { ChecklistCard(it, callbacks) }
 
         ListenerHealthLine(state.listener)
+    }
+
+    // A profile's throttles and schedule entries go with it and there is no undo: ask once.
+    state.profiles.firstOrNull { it.id == deleting }?.let { profile ->
+        AlertDialog(
+            onDismissRequest = { deleting = null },
+            title = { Text(stringResource(R.string.profiles_delete_confirm, profile.name)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    callbacks.onDeleteProfile(profile.id)
+                    deleting = null
+                }) { Text(stringResource(R.string.profiles_delete)) }
+            },
+            dismissButton = { TextButton(onClick = { deleting = null }) { Text(stringResource(R.string.rules_cancel)) } },
+        )
     }
 
     dialog?.let { d ->
@@ -245,6 +263,7 @@ private fun ProfilesCard(
     callbacks: FocusCallbacks,
     onNew: (copyOf: ProfileRow?) -> Unit,
     onRename: (ProfileRow) -> Unit,
+    onDelete: (ProfileRow) -> Unit,
 ) {
     HushCard(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(vertical = 4.dp)) {
@@ -261,6 +280,7 @@ private fun ProfilesCard(
                         callbacks = callbacks,
                         onDuplicate = { onNew(profile) },
                         onRename = { onRename(profile) },
+                        onDelete = { onDelete(profile) },
                     )
                 }
             }
@@ -276,6 +296,7 @@ private fun ProfileRowItem(
     callbacks: FocusCallbacks,
     onDuplicate: () -> Unit,
     onRename: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
     Row(
@@ -321,7 +342,7 @@ private fun ProfileRowItem(
                 item(R.string.profiles_edit) { callbacks.onEditProfile(profile.id) }
                 item(R.string.profiles_rename, action = onRename)
                 item(R.string.profiles_duplicate, action = onDuplicate)
-                item(R.string.profiles_delete, enabled = canDelete) { callbacks.onDeleteProfile(profile.id) }
+                item(R.string.profiles_delete, enabled = canDelete, action = onDelete)
             }
         }
     }
@@ -451,7 +472,7 @@ private fun ScheduleLine(status: ScheduleStatus, zone: ZoneId, onResume: () -> U
             when (status) {
                 is ScheduleStatus.Manual -> stringResource(R.string.schedule_manual)
                 is ScheduleStatus.Following ->
-                    status.nextChangeAt?.let { stringResource(R.string.schedule_following, formatClock(it, zone)) }
+                    status.nextChangeAt?.let { stringResource(R.string.schedule_following, formatDayClock(it, zone)) }
                         ?: stringResource(R.string.schedule_following_idle)
             },
             style = MaterialTheme.typography.bodyMedium,

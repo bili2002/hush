@@ -101,6 +101,31 @@ class FocusProfilesTest {
     }
 
     @Test
+    fun `a one-time profile is also deleted when the schedule switches away from it`() {
+        val once = base.withProfileAdded("once", "Tonight", copyOf = null, oneTime = true)
+            .withScheduleEntry(ScheduleEntry("e", DEFAULT_PROFILE_ID, setOf(1), 9 * 60, 17 * 60))
+            .withActiveProfile("once")
+
+        // 2024-01-08 is a Monday.
+        val after = once.reconciled(at("2024-01-08T09:00:00"), utc)
+
+        assertEquals(listOf(DEFAULT_PROFILE_ID), after.profileList.map { it.id })
+        assertTrue(after.focusEnabled)
+        assertEquals(base.liveConfig, after.liveConfig)
+    }
+
+    @Test
+    fun `a deleted group's throttle is forgotten in every profile, so a group that comes back starts on the default`() {
+        val night = base.withProfileAdded("night", "Night", null, false)
+            .withProfileEdited("night") { it.withCategoryMinutes("g", MUTED) }
+
+        val recreated = night.withoutCategory("g").withCategoryAdded("g", "Group again")
+
+        assertEquals(ProfileConfig(), recreated.profile("night")?.config)
+        assertEquals(60, recreated.viewOf("night").throttleMinutes(alpha, null))
+    }
+
+    @Test
     fun `deleting a profile drops its schedule, hands over if it was active, and never deletes the last`() {
         val two = base.withProfileAdded("p2", "Evening", null, false)
             .withScheduleEntry(ScheduleEntry("e1", "p2", setOf(1), 0, 60))

@@ -79,12 +79,18 @@ fun Settings.withCategoryRenamed(id: String, name: String): Settings =
 fun Settings.withCategoryMinutes(id: String, minutes: Int?): Settings =
     copy(rules = rules.copy(categories = rules.categories.map { if (it.id == id) it.copy(minutes = minutes) else it }))
 
-/** Deleting a category never un-holds its apps: they fall back to the default interval. */
+/**
+ * Deleting a category never un-holds its apps: they fall back to the default interval. Its
+ * throttle is forgotten in every profile, so a group that later comes back under the same id (the
+ * automatic sort re-creates presets) starts on the default everywhere and is not silently muted
+ * by what a profile once said about the old one.
+ */
 fun Settings.withoutCategory(id: String): Settings = copy(
     rules = rules.copy(
         categories = rules.categories.filterNot { it.id == id },
         appCategory = rules.appCategory.filterValues { it != id },
     ),
+    profiles = profiles.copy(list = profiles.list.map { it.copy(config = it.config.copy(categoryMinutes = it.config.categoryMinutes - id)) }),
 )
 
 /** Puts a held app into [categoryId], or with null back among the uncategorised ones. */

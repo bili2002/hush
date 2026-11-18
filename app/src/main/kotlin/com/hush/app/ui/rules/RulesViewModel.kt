@@ -7,7 +7,6 @@ import com.hush.app.db.NotificationRepository
 import com.hush.app.focus.CategoryGroup
 import com.hush.app.focus.ChatRule
 import com.hush.app.focus.FocusActions
-import com.hush.app.focus.FocusProfile
 import com.hush.app.focus.INSTANT
 import com.hush.app.focus.Presets
 import com.hush.app.focus.activeProfile
@@ -69,6 +68,8 @@ data class ChatPicker(val packageName: String?, val appLabel: String?, val items
 
 data class RulesUiState(
     val loading: Boolean = true,
+    /** The profile this screen was opened for no longer exists (deleted, or a one-time one that was left): close. */
+    val gone: Boolean = false,
     /** The profile being edited, named only when there is more than one to tell apart. */
     val profileName: String? = null,
     /** The profile turns Do Not Disturb on while Focus runs with it. */
@@ -106,8 +107,8 @@ class RulesViewModel(
     private val categories: AppCategoryResolver,
     private val signals: UiSignals,
     private val newId: () -> String,
-    /** The profile this screen edits; null (or one that no longer exists) = whichever is active. */
-    private val profileArg: String?,
+    /** The profile this screen edits; null = the one that is active when the screen opens. */
+    profileArg: String?,
 ) : ViewModel() {
 
     @Inject
@@ -122,7 +123,12 @@ class RulesViewModel(
         signals: UiSignals,
     ) : this(settings, actions, repo, appsSource, labels, categories, signals, { UUID.randomUUID().toString() }, savedStateHandle[Routes.ARG_PROFILE])
 
-    private fun profileOf(s: Settings): FocusProfile = profileArg?.let(s::profile) ?: s.activeProfile
+    /**
+     * The profile being edited, fixed for the life of the screen. It never follows the active
+     * profile: a schedule switching profiles while the screen is open must not move an edit meant
+     * for one profile into another.
+     */
+    private val profileId = MutableStateFlow(profileArg)
 
     private val overlay = MutableStateFlow(Overlay())
 
@@ -142,8 +148,9 @@ class RulesViewModel(
             }
         }
 
-    val state: StateFlow<RulesUiState> = combine(settings.settings, overlay, picker) { all, o, p ->
-        val profile = profileOf(all)
+    val state: StateFlow<RulesUiState> = combine(settings.settings, overlay, picker, profileId) { all, o, p, id ->
+        id ?: return@combine RulesUiState()
+        val profile = all.profile(id) ?: return@combine RulesUiState(gone = true)
         // The settings as they would be with this profile active: every rule function reads it unchanged.
         val s = all.viewOf(profile.id)
         RulesUiState(
@@ -185,6 +192,7 @@ class RulesViewModel(
     fun seed() {
         edit {
             val current = settings.current()
+            if (profileId.value == null) profileId.value = current.activeProfile.id
             if (!current.rules.seeded) {
                 val osCategories = current.holdPackages.associateWith(categories::osCategory)
                 actions.updateRules { it.seededWithPresets(osCategories::get) }
@@ -214,7 +222,7 @@ class RulesViewModel(
         if (added > 0 || reportNothing) overlay.update { it.copy(autoSorted = added) }
     }
 
-    fun setDnd(on: Boolean) = edit { actions.updateRules { it.withProfileDnd(profileOf(it).id, on) } }
+    fun setDnd(on: Boolean) = edit { profileId.value?.let { id -> actions.updateRules { it.withProfileDnd(id, on) } } }
 
     fun setDefaultMinutes(minutes: Int) {
         require(minutes > 0) { "the default interval must be positive, was $minutes" }
@@ -288,8 +296,10 @@ class RulesViewModel(
         overlay.update { it.copy(error = null) }
     }
 
-    /** A rule edit lands in the profile this screen is for, active or not. */
-    private fun update(transform: (Settings) -> Settings) = edit { actions.updateRules { it.withProfileEdited(profileOf(it).id, transform) } }
+    /** A rule edit lands in the profile this screen is for, active or not; if that profile is gone it changes nothing. */
+    private fun update(transform: (Settings) -> Settings) = edit {
+        profileId.value?.let { id -> actions.updateRules { it.withProfileEdited(id, transform) } }
+    }
 
     /**
      * A rule edit also re-runs delivery; if that (or the write) fails, say why instead of silently

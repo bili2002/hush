@@ -10,7 +10,11 @@ import com.hush.app.focus.ProfileConfig
 import com.hush.app.focus.activeProfile
 import com.hush.app.focus.liveConfig
 import com.hush.app.focus.profile
+import com.hush.app.focus.throttleMinutes
+import com.hush.app.focus.viewOf
+import com.hush.app.focus.withActiveProfile
 import com.hush.app.focus.withProfileAdded
+import com.hush.app.focus.withoutProfile
 import com.hush.app.settings.Settings
 import com.hush.app.testing.FakeFocusActions
 import com.hush.app.testing.FakeSettingsStore
@@ -422,13 +426,31 @@ class RulesViewModelTest {
     }
 
     @Test
-    fun `with one profile it is not named, and an unknown profile falls back to the active one`() = runTest {
+    fun `with one profile it is not named`() = runTest {
         assertNull(vm().loaded().profileName)
+    }
 
+    @Test
+    fun `the screen stays on the profile it opened for when another becomes active, and closes when its profile is gone`() = runTest {
         val two = seeded.withProfileAdded("p2", "Evening", copyOf = null, oneTime = false)
-        val fallback = vm(FakeSettingsStore(two), profile = "deleted-meanwhile").loaded()
-        assertEquals("Default", fallback.profileName)
-        assertEquals(15, fallback.groups.first().effectiveMinutes)
+        val settings = FakeSettingsStore(two)
+        // Opened without naming a profile: that is the active one, "default", for good.
+        val vm = vm(settings)
+        assertEquals("Default", vm.loaded().profileName)
+
+        settings.update { it.withActiveProfile("p2") }
+        vm.setCategoryMinutes("fast", 30)
+        assertEquals(30, settings.state.first { it.profile("default")?.config?.categoryMinutes?.get("fast") == 30 }.viewOf("default").throttleMinutes(alpha, null))
+        assertEquals(60, settings.state.value.throttleMinutes(alpha, null), "the profile that took over is not the one edited")
+        assertEquals("Default", vm.state.first { it.groups.firstOrNull()?.minutes == 30 }.profileName)
+
+        settings.update { it.withoutProfile("default") }
+        assertTrue(vm.state.first { it.gone }.gone)
+        val before = settings.state.value
+        vm.setCategoryMinutes("fast", MUTED)
+        vm.setDnd(true)
+        runCurrent()
+        assertEquals(before, settings.state.value, "an edit for a profile that is gone changes nothing")
     }
 
     @Test

@@ -96,7 +96,7 @@ class DefaultFocusActionsImplTest {
     }
 
     @Test
-    fun aRuleEditReschedulesOnlyWhenEnabled() = runTest {
+    fun aRuleEditArmsTheAlarmOnlyWhenEnabled() = runTest {
         actions.updateRules { it.copy(slotMinutes = 30) }
         assertEquals(30, settings.state.value.slotMinutes)
         assertEquals(0, alarms.size)
@@ -232,6 +232,34 @@ class DefaultFocusActionsImplTest {
         assertNull(s.profiles.manualUntil)
         assertTrue(s.focusEnabled)
         assertEquals("quiet", s.activeProfile.id)
+    }
+
+    @Test
+    fun aTapOnTheProfileAlreadyInForceDoesNotSuspendTheSchedule() = runTest {
+        twoProfiles()
+        actions.updateRules { it.withScheduleEntry(entry("quiet", 22 * 60, 23 * 60)) }
+
+        actions.selectProfile("quiet")
+        assertNull(settings.state.value.profiles.manualUntil)
+
+        actions.selectProfile("no-such-profile")
+        assertNull(settings.state.value.profiles.manualUntil)
+        assertEquals("quiet", settings.state.value.activeProfile.id)
+    }
+
+    @Test
+    fun theEndOfAScheduledWindowReleasesEverythingHeldInTheSameRun() = runTest {
+        // Default holds alpha hourly; its window is 22:00–23:00 and we are inside it.
+        actions.updateRules { it.withScheduleEntry(entry(DEFAULT_PROFILE_ID, 22 * 60, 23 * 60)) }
+        assertTrue(settings.state.value.focusEnabled)
+        repo.insert(event("a1", packageName = "com.example.alpha", postTime = now - 60_000L, held = true))
+
+        // The window is moved away from now: the same edit turns Focus off and delivers the row.
+        actions.updateRules { it.withScheduleEntry(entry(DEFAULT_PROFILE_ID, 23 * 60 + 30, 23 * 60 + 45)) }
+
+        assertFalse(settings.state.value.focusEnabled)
+        assertEquals(0, repo.selectHeldUndelivered().size)
+        assertEquals(1, shadowOf(nm).allNotifications.size)
     }
 
     @Test

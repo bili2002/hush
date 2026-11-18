@@ -10,7 +10,7 @@ import kotlinx.coroutines.CoroutineScope
 
 /**
  * Alarms are cleared on reboot and on app update, and an RTC alarm drifts when the clock or zone
- * changes. On each of those events: deliver anything overdue and re-arm the slot alarm (both
+ * changes. On each of those events: deliver anything overdue and re-arm the alarm (both
  * inside [Deliverer.deliverDue]). This is the "never lose" path for held rows.
  */
 @AndroidEntryPoint

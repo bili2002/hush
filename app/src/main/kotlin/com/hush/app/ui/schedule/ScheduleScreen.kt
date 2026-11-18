@@ -198,9 +198,12 @@ private fun EntryCard(
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                AssistChip(onClick = onPickStart, label = { Text(formatMinutes(entry.start)) })
+                // Read as "Start 09:00" / "End 17:00": the bare times do not say which is which.
+                val startLabel = stringResource(R.string.schedule_start, formatMinutes(entry.start))
+                val endLabel = stringResource(R.string.schedule_end, formatMinutes(entry.end))
+                AssistChip(onClick = onPickStart, label = { Text(formatMinutes(entry.start)) }, modifier = Modifier.semantics { contentDescription = startLabel })
                 Text("–")
-                AssistChip(onClick = onPickEnd, label = { Text(formatMinutes(entry.end)) })
+                AssistChip(onClick = onPickEnd, label = { Text(formatMinutes(entry.end)) }, modifier = Modifier.semantics { contentDescription = endLabel })
                 if (entry.end <= entry.start) {
                     Text(
                         stringResource(R.string.schedule_next_day),

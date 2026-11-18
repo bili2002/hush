@@ -23,8 +23,10 @@ interface DndController {
 class AndroidDndController @Inject constructor(@ApplicationContext private val ctx: Context) : DndController {
     private val nm get() = ctx.getSystemService(NotificationManager::class.java)
 
-    override fun isOn(): Boolean = nm.currentInterruptionFilter.let {
-        it != NotificationManager.INTERRUPTION_FILTER_ALL && it != NotificationManager.INTERRUPTION_FILTER_UNKNOWN
+    override fun isOn(): Boolean = try {
+        nm.currentInterruptionFilter.let { it != NotificationManager.INTERRUPTION_FILTER_ALL && it != NotificationManager.INTERRUPTION_FILTER_UNKNOWN }
+    } catch (e: RuntimeException) {
+        false
     }
 
     /**
@@ -41,6 +43,9 @@ class AndroidDndController @Inject constructor(@ApplicationContext private val c
         }
     } catch (e: SecurityException) {
         e.message ?: ctx.getString(R.string.focus_dnd_no_access)
+    } catch (e: RuntimeException) {
+        // Whatever the system service throws, the delivery run this is part of has to go on.
+        e.message ?: e.javaClass.simpleName
     }
 }
 

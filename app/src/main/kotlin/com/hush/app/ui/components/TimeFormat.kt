@@ -9,12 +9,19 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 private val clockFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+private val dayClockFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE HH:mm")
 private val dayFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE, d MMM")
 private val dayWithYearFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE, d MMM yyyy")
 
 /** "14:00" for [millis] in [zone]. */
 fun formatClock(millis: Long, zone: ZoneId): String =
     Instant.ofEpochMilli(millis).atZone(zone).toLocalTime().format(clockFormat)
+
+/** "14:00" when [millis] is today in [zone], "Mon 09:00" when it is another day. */
+fun formatDayClock(millis: Long, zone: ZoneId, today: LocalDate = LocalDate.now(zone)): String {
+    val at = Instant.ofEpochMilli(millis).atZone(zone)
+    return if (at.toLocalDate() == today) at.toLocalTime().format(clockFormat) else at.format(dayClockFormat)
+}
 
 /** Calendar day of [millis] in [zone]; what History groups rows by. */
 fun dayOf(millis: Long, zone: ZoneId): LocalDate =

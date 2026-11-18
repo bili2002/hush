@@ -47,18 +47,38 @@
   `config` is stale, so profiles are read through `Settings.profileList` only.
 - **A manual change stands until midnight.** The owner asked to be able to override the schedule
   "for the given day". So with a schedule, the switch and a profile pick both hold until local
-  midnight; "Resume schedule" ends it earlier. Without a schedule nothing expires.
+  midnight; "Resume schedule" ends it earlier. Without a schedule nothing expires. Known edges of
+  "midnight": a manual "on" at 23:50 outside every entry ends ten minutes later, and a manual
+  "off" inside an entry that runs past midnight is undone at 00:00. A tap on the profile already
+  in force is not a manual change.
 - **With a schedule, outside every entry Focus is off.** One rule, no third state. To keep Focus
   on all day, add an entry for it.
 - **One-time profiles go when another profile takes over** (picked, or scheduled), not at a
-  clock time: a late session is not cut off at midnight. They cannot be scheduled.
+  clock time of their own. Without a schedule that is whenever the owner picks another; with one,
+  it is the first scheduled start after the manual hold ends at midnight. They cannot be
+  scheduled.
+- **"Apps & throttles" is pinned to the profile it was opened for.** It never follows the active
+  profile, so a schedule switching underneath cannot move an edit into another profile; if its
+  profile disappears the screen closes.
+- **A new schedule entry has no day selected**, so it does nothing until it is set up. Every
+  later edit of an entry applies at once.
+- **A deleted group's throttle is forgotten in every profile** (`withoutCategory`), so a preset
+  the automatic sort re-creates under the same id starts on the default everywhere.
+- **Process start runs a delivery pass** when Focus is on or a schedule exists
+  (`FocusInitializer`), instead of only re-arming: a schedule start whose alarm was lost with the
+  process is applied then.
 - **A schedule change that turns Focus off, or a switch to a profile that holds less, releases
   the affected rows in the same run.** Nothing waits under rules that no longer hold it.
 - **Behaviour change:** any rule edit now ends in a delivery run even with Focus off (it is what
   applies a schedule edit). With Focus off that run releases rows still held from an earlier
   blocked flush, which previously waited for the periodic safety net.
+- **Do Not Disturb, known limits.** With targetSdk 35 on Android 15+ the filter Hush sets is its
+  own mode (an implicit rule), so turning it off cannot touch the owner's. On Android 14 and
+  below the switch is global: if Hush turned it on and the owner's own rule starts before Focus
+  ends, Hush's "off" ends that too. `dndByHush` lives in the profiles preference; clearing app
+  data while Hush's Do Not Disturb is on leaves it on (Android ≤ 14).
 - **Not verifiable off the phone:** that notification access is enough to switch Do Not Disturb
-  (the code asks `isNotificationPolicyAccessGranted` and reports when it is not), how Android 15
-  presents a filter set by an app (as the app's own mode), and alarm punctuality for schedule
-  starts in Doze (`setAndAllowWhileIdle`; the gate covers holding, Do Not Disturb waits for the
+  (the code asks `isNotificationPolicyAccessGranted` and reports when it is not; the Android
+  reference does not say), and alarm punctuality for schedule starts (`setAndAllowWhileIdle` is
+  inexact; the gate covers holding at once, Do Not Disturb and the stored state wait for the
   alarm).

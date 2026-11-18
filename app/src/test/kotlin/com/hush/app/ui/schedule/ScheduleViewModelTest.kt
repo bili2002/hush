@@ -1,6 +1,7 @@
 package com.hush.app.ui.schedule
 
 import com.hush.app.focus.ScheduleEntry
+import com.hush.app.focus.hasSchedule
 import com.hush.app.focus.withProfileAdded
 import com.hush.app.settings.Settings
 import com.hush.app.testing.FakeFocusActions
@@ -9,6 +10,7 @@ import com.hush.app.testing.MainDispatcherRule
 import com.hush.app.testing.cancelAndJoin
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.flow.first
@@ -47,18 +49,20 @@ class ScheduleViewModelTest {
     }
 
     @Test
-    fun `add starts from working hours for the first profile, and every part can be changed or removed`() = runTest {
+    fun `add starts from working hours on no day yet, and every part can be changed or removed`() = runTest {
         val settings = FakeSettingsStore(profiles)
         val actions = FakeFocusActions(settings)
         val vm = vm(settings, actions)
 
         vm.add()
         assertEquals(
-            listOf(ScheduleEntry("e1", "default", setOf(1, 2, 3, 4, 5), 9 * 60, 17 * 60)),
+            listOf(ScheduleEntry("e1", "default", emptySet(), 9 * 60, 17 * 60)),
             vm.state.first { it.entries.size == 1 }.entries,
         )
+        assertFalse(settings.state.value.hasSchedule, "a new entry does nothing until a day is chosen")
 
         vm.setProfile("e1", "p2")
+        (1..5).forEach { vm.toggleDay("e1", it) }
         vm.toggleDay("e1", 5)
         vm.toggleDay("e1", 7)
         vm.setStart("e1", 22 * 60)
@@ -67,7 +71,7 @@ class ScheduleViewModelTest {
             ScheduleEntry("e1", "p2", setOf(1, 2, 3, 4, 7), 22 * 60, 7 * 60 + 30),
             vm.state.first { it.entries.singleOrNull()?.end == 7 * 60 + 30 }.entries.single(),
         )
-        assertEquals(6, actions.rulesUpdates, "every edit goes through FocusActions, which is what applies the schedule")
+        assertEquals(11, actions.rulesUpdates, "every edit goes through FocusActions, which is what applies the schedule")
 
         vm.setStart("no-such-entry", 0)
         vm.remove("e1")

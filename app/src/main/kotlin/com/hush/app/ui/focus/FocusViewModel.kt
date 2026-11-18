@@ -18,6 +18,8 @@ import com.hush.app.focus.nextScheduleChange
 import com.hush.app.focus.profileList
 import com.hush.app.focus.reconciled
 import com.hush.app.focus.throttleMinutes
+import com.hush.app.focus.withActiveProfile
+import com.hush.app.focus.withManualHold
 import com.hush.app.focus.withProfileAdded
 import com.hush.app.focus.withProfileRenamed
 import com.hush.app.focus.withoutProfile
@@ -230,6 +232,11 @@ class FocusViewModel(
     /** Re-reads the OS facts; the screen calls this on resume so a settings round-trip is reflected. */
     fun refreshSystemState() {
         system.value = systemStatus.snapshot()
+        // Back from the system's Do Not Disturb access page: the retry of a switch that failed is a delivery
+        // run, and nothing else would start one before the next alarm.
+        viewModelScope.launch {
+            if (runCatching { settings.current().profiles.dndError }.getOrNull() != null) runCatching { actions.updateRules { it } }
+        }
     }
 
     fun setEnabled(enabled: Boolean) = act { actions.setEnabled(enabled) }
@@ -246,8 +253,11 @@ class FocusViewModel(
         if (name.isBlank()) return
         val id = newId()
         act {
-            actions.updateRules { it.withProfileAdded(id, name, copyOf, oneTime) }
-            if (oneTime) actions.selectProfile(id)
+            // One write: a profile that exists but was not switched to would be a one-time profile nobody uses.
+            actions.updateRules { s ->
+                val added = s.withProfileAdded(id, name, copyOf, oneTime)
+                if (oneTime) added.withActiveProfile(id).withManualHold(clock.millis(), zone) else added
+            }
             signals.requestNavigation(Routes.focusRules(id))
         }
     }
@@ -300,6 +310,10 @@ class FocusViewModel(
 
     /** Also the fix for "nothing would be held": apps are added and given intervals there (on a first visit, sorted in automatically). */
     fun manageRules() {
-        signals.requestNavigation(Routes.FOCUS_RULES)
+        viewModelScope.launch {
+            // Named, so the screen keeps editing this profile if the schedule switches while it is open.
+            val shown = runCatching { settings.current().reconciled(clock.millis(), zone).activeProfile.id }.getOrNull()
+            signals.requestNavigation(shown?.let(Routes::focusRules) ?: Routes.FOCUS_RULES)
+        }
     }
 }

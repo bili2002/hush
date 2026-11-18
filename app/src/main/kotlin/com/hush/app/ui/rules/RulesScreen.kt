@@ -43,6 +43,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -106,6 +107,8 @@ data class RulesCallbacks(
 @Composable
 fun RulesScreen(onBack: () -> Unit, vm: RulesViewModel = hiltViewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
+    // The profile was deleted under the screen: there is nothing left here to edit.
+    LaunchedEffect(state.gone) { if (state.gone) onBack() }
     RulesContent(
         state = state,
         callbacks = RulesCallbacks(

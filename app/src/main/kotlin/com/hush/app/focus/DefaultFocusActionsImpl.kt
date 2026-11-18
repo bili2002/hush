@@ -30,10 +30,15 @@ class DefaultFocusActionsImpl @Inject constructor(
             return
         }
         val now = clock.millis()
+        val zone = ZoneId.systemDefault()
         // Off: the gate stops holding new rows before the forced run flushes the ones already held. If the
         // flush is blocked (notifications denied) the rows stay held and the run leaves the alarm armed to retry.
         apply(force = !enabled) {
-            it.copy(focusEnabled = enabled, lastFocusError = if (enabled) null else it.lastFocusError).withManualHold(now, ZoneId.systemDefault())
+            // On top of what the schedule says right now (which is what the screen showed), not of what the
+            // last alarm wrote down.
+            it.reconciled(now, zone)
+                .copy(focusEnabled = enabled, lastFocusError = if (enabled) null else it.lastFocusError)
+                .withManualHold(now, zone)
         }
     }
 
@@ -41,7 +46,12 @@ class DefaultFocusActionsImpl @Inject constructor(
 
     override suspend fun selectProfile(id: String) {
         val now = clock.millis()
-        apply(force = false) { it.withActiveProfile(id).withManualHold(now, ZoneId.systemDefault()) }
+        val zone = ZoneId.systemDefault()
+        apply(force = false) {
+            val shown = it.reconciled(now, zone)
+            // A tap on the profile that is already in force is not a choice, and must not suspend the schedule.
+            if (shown.activeProfile.id == id || shown.profile(id) == null) it else shown.withActiveProfile(id).withManualHold(now, zone)
+        }
     }
 
     override suspend fun resumeSchedule() = apply(force = false) { it.withoutManualHold() }

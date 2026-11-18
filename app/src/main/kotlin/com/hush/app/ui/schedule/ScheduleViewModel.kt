@@ -53,11 +53,15 @@ class ScheduleViewModel(
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ScheduleUiState())
 
-    /** A working-hours entry for the first profile; every part of it is then changed in place. */
+    /**
+     * A working-hours entry for the first profile with no day chosen yet, so it does nothing until
+     * the owner has set it up: every edit of the schedule takes effect at once, and a ready-made
+     * Mon–Fri entry would switch Focus on or off the moment "Add" is tapped.
+     */
     fun add() = edit {
         actions.updateRules { s ->
             val profile = s.profileList.firstOrNull { !it.oneTime } ?: return@updateRules s
-            s.withScheduleEntry(ScheduleEntry(newId(), profile.id, WEEKDAYS, start = 9 * 60, end = 17 * 60))
+            s.withScheduleEntry(ScheduleEntry(newId(), profile.id, days = emptySet(), start = 9 * 60, end = 17 * 60))
         }
     }
 
@@ -95,7 +99,6 @@ class ScheduleViewModel(
     }
 
     companion object {
-        val WEEKDAYS = setOf(1, 2, 3, 4, 5)
         const val MINUTES_PER_DAY = 24 * 60
     }
 }

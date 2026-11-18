@@ -344,7 +344,7 @@ class FocusViewModelTest {
         vm().manageRules()
         runCurrent()
 
-        assertEquals("focus/rules", route)
+        assertEquals("focus/rules?profile=default", route, "named, so the screen stays on this profile")
         job.cancel()
     }
 

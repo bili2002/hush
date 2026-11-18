@@ -27,7 +27,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * Owns the HELD → DELIVERED transition: selects the held-undelivered rows that are due, posts ONE
- * digest notification, marks those rows delivered, and re-arms the slot alarm. Callers: the slot alarm ([DeliveryReceiver]), boot/time-change
+ * digest notification, marks those rows delivered, and re-arms the alarm. Callers: the alarm ([DeliveryReceiver]), boot/time-change
  * ([RescheduleReceiver]), the UI ([DefaultFocusActionsImpl]) and the Sync worker's periodic
  * safety net. All of them can overlap, hence the [Mutex].
  */

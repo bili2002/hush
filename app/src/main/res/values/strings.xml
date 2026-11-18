@@ -161,11 +161,14 @@
     <string name="profiles_rename">Rename</string>
     <string name="profiles_duplicate">Duplicate</string>
     <string name="profiles_delete">Delete</string>
+    <string name="profiles_delete_confirm">Delete %1$s?</string>
     <string name="profiles_dnd">Do Not Disturb</string>
     <string name="schedule_title">Schedule</string>
     <string name="schedule_add">Add</string>
     <string name="schedule_remove">Remove</string>
     <string name="schedule_next_day">next day</string>
+    <string name="schedule_start">Start %1$s</string>
+    <string name="schedule_end">End %1$s</string>
     <string name="schedule_following">Schedule · next change %1$s</string>
     <string name="schedule_following_idle">Schedule</string>
     <string name="schedule_manual">Manual until midnight</string>

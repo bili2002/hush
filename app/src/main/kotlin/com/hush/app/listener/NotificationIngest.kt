@@ -36,6 +36,7 @@ class NotificationIngest @Inject constructor(
     private val clock: Clock,
     @ApplicationScope private val scope: CoroutineScope,
     private val mapper: NotificationMapper,
+    private val tapTargets: TapTargets,
 ) {
     private val dedupe = DedupeCache()
 
@@ -87,6 +88,7 @@ class NotificationIngest @Inject constructor(
             return null
         }
         dedupe.remember(row)
+        tapTargets.remember(row, sbn.notification.contentIntent)
 
         if (decision == Decision.HOLD) {
             try {
@@ -146,6 +148,7 @@ class NotificationIngest @Inject constructor(
             try {
                 withContext(NonCancellable) { repo.insert(event) }
                 dedupe.remember(event)
+                tapTargets.remember(event, sbn.notification.contentIntent)
                 synchronized(backfilled) { backfilled += event.key to event.postTime }
             } catch (e: Exception) {
                 Log.e(TAG, "backfill insert failed for ${sbn.packageName}", e)

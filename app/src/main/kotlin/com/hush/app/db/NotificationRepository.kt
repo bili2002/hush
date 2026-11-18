@@ -38,6 +38,8 @@ class NotificationRepository @Inject constructor(
             removed_reason = e.removedReason?.toLong(),
             held = e.held,
             created_at = clock.millis(),
+            conversation_id = e.conversationId,
+            conversation_title = e.conversationTitle,
         )
     }
 
@@ -77,10 +79,29 @@ class NotificationRepository @Inject constructor(
         queries.selectRecent(before = before, limit = limit.toLong()).asFlow().mapToList(Dispatchers.IO)
             .map { rows -> rows.map { it.toEvent() } }
 
-    /** Substring match over title/text/big_text; `%`, `_` and `\` in [q] are matched literally. */
-    fun search(q: String, packageName: String?, limit: Int): Flow<List<NotificationEvent>> =
-        queries.search(q = escapeLike(q), packageName = packageName, limit = limit.toLong()).asFlow().mapToList(Dispatchers.IO)
+    /**
+     * The History list: POSTED rows, newest first. [q] is a substring matched over title, text,
+     * big_text and the conversation title (`%`, `_` and `\` are literal; empty = no search);
+     * [packageName] and [chat] (a [NotificationEvent.chatKey]) narrow it further when non-null.
+     */
+    fun selectHistory(q: String, packageName: String?, chat: String?, limit: Int): Flow<List<NotificationEvent>> =
+        queries.selectHistory(packageName = packageName, chat = chat, q = escapeLike(q), limit = limit.toLong())
+            .asFlow().mapToList(Dispatchers.IO)
             .map { rows -> rows.map { it.toEvent() } }
+
+    /** How many rows [selectHistory] would return without its limit. */
+    fun countHistory(q: String, packageName: String?, chat: String?): Flow<Long> =
+        queries.countHistory(packageName = packageName, chat = chat, q = escapeLike(q)).asFlow().mapToOne(Dispatchers.IO)
+
+    /** The chats of one app, most recent first; the title is the newest name the chat was seen under. */
+    fun selectChats(packageName: String): Flow<List<ChatSummary>> =
+        queries.selectChats(packageName).asFlow().mapToList(Dispatchers.IO).map { rows ->
+            rows.mapNotNull { row ->
+                val key = row.chat_key ?: return@mapNotNull null
+                val title = row.conversation_title?.takeIf { it.isNotBlank() } ?: row.title?.takeIf { it.isNotBlank() } ?: key
+                ChatSummary(key, title, row.count, row.last_seen ?: 0L)
+            }
+        }
 
     fun selectApps(): Flow<List<AppSummary>> =
         queries.selectApps().asFlow().mapToList(Dispatchers.IO).map { rows ->
@@ -118,6 +139,8 @@ class NotificationRepository @Inject constructor(
         held = held,
         deliveredAt = delivered_at,
         syncedAt = synced_at,
+        conversationId = conversation_id,
+        conversationTitle = conversation_title,
     )
 
     private companion object {

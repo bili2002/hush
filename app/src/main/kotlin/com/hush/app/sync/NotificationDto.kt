@@ -25,6 +25,9 @@ data class NotificationDto(
     /** `"posted"` or `"removed"`. */
     val event: String,
     val removedReason: Int?,
+    /** Added with the chat filter (#20); a server that predates it ignores unknown keys. */
+    val conversationId: String?,
+    val conversationTitle: String?,
 )
 
 @Serializable
@@ -49,4 +52,6 @@ fun NotificationEvent.toDto(): NotificationDto = NotificationDto(
     importance = importance,
     event = event.name.lowercase(),
     removedReason = removedReason,
+    conversationId = conversationId,
+    conversationTitle = conversationTitle,
 )

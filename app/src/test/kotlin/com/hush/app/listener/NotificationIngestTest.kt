@@ -1,5 +1,7 @@
 package com.hush.app.listener
 
+import android.app.PendingIntent
+import android.content.Intent
 import android.service.notification.NotificationListenerService
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import com.hush.app.db.EventType
@@ -42,6 +44,7 @@ class NotificationIngestTest {
     private val gate = CountingGate(Decision.PASS_THROUGH)
     private val cancelled = mutableListOf<String>()
     private val cancel: (String) -> Unit = { cancelled += it }
+    private val tapTargets = TapTargets()
 
     private fun ingest(store: SettingsStore = settings) = NotificationIngest(
         repo = repo,
@@ -50,6 +53,7 @@ class NotificationIngestTest {
         clock = clock,
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
         mapper = NotificationMapper(appContext()),
+        tapTargets = tapTargets,
     )
 
     private val ingest = ingest()
@@ -65,6 +69,16 @@ class NotificationIngestTest {
         assertEquals(false, row.held)
         assertEquals(3, row.importance)
         assertTrue(cancelled.isEmpty())
+    }
+
+    @Test
+    fun `the tap target of a recorded notification is remembered, held or not`() = runTest {
+        val target = PendingIntent.getActivity(appContext(), 0, Intent("com.example.OPEN"), PendingIntent.FLAG_IMMUTABLE)
+        gate.decision = Decision.HOLD
+
+        ingest.onPosted(sbn(notification { it.setContentIntent(target) }), null, cancel)
+
+        assertEquals(target, tapTargets.find(rows().single()))
     }
 
     @Test

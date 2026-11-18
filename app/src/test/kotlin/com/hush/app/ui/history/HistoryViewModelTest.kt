@@ -3,6 +3,9 @@ package com.hush.app.ui.history
 import androidx.lifecycle.viewModelScope
 import com.hush.app.db.EventType
 import com.hush.app.db.NotificationRepository
+import com.hush.app.db.ChatSummary
+import com.hush.app.open.OpenResult
+import com.hush.app.testing.FakeOpener
 import com.hush.app.testing.FakeSystemStatus
 import com.hush.app.testing.MainDispatcherRule
 import com.hush.app.testing.event
@@ -31,10 +34,11 @@ class HistoryViewModelTest {
     private val repo: NotificationRepository = testRepository(fixedClock())
     private val system = FakeSystemStatus()
     private val signals = UiSignals()
+    private val opener = FakeOpener()
     private val vms = mutableListOf<HistoryViewModel>()
 
     private fun vm(): HistoryViewModel =
-        HistoryViewModel(repo, system, signals, ZoneOffset.UTC, debounceMillis = HistoryViewModel.DEBOUNCE_MILLIS).also { vms += it }
+        HistoryViewModel(repo, system, signals, opener, ZoneOffset.UTC, debounceMillis = HistoryViewModel.DEBOUNCE_MILLIS).also { vms += it }
 
     @After
     fun tearDown() = vms.forEach { it.viewModelScope.cancel() }
@@ -100,7 +104,7 @@ class HistoryViewModelTest {
     }
 
     @Test
-    fun `app chip filters to one package and tapping it again clears`() = runTest {
+    fun `app filter narrows to one package and null clears it`() = runTest {
         repo.insert(event("a1", packageName = "com.example.alpha", postTime = 30))
         repo.insert(event("b1", packageName = "com.example.beta", postTime = 20))
         repo.insert(event("a2", packageName = "com.example.alpha", postTime = 10))
@@ -108,10 +112,85 @@ class HistoryViewModelTest {
         assertEquals(listOf("com.example.alpha", "com.example.beta"), vm.loaded().apps.map { it.packageName })
 
         vm.setAppFilter("com.example.beta")
-        assertEquals(listOf("b1"), vm.state.first { (it.mode as? HistoryMode.Browse)?.app == "com.example.beta" }.ids())
+        val filtered = vm.state.first { (it.mode as? HistoryMode.Browse)?.app == "com.example.beta" }
+        assertEquals(listOf("b1"), filtered.ids())
+        assertEquals(1, filtered.total)
+
+        vm.setAppFilter(null)
+        assertEquals(listOf("a1", "b1", "a2"), vm.state.first { (it.mode as? HistoryMode.Browse)?.app == null }.ids())
+    }
+
+    @Test
+    fun `the filtered app's chats are listed, and a chat filter narrows inside the app`() = runTest {
+        val pkg = "com.example.alpha"
+        repo.insert(event("g1", packageName = pkg, title = "Sender A", conversationId = "c1", conversationTitle = "Group one", postTime = 50))
+        repo.insert(event("g2", packageName = pkg, title = "Sender B", conversationId = "c1", conversationTitle = "Group one", postTime = 40))
+        repo.insert(event("legacy", packageName = pkg, title = "Sender A", postTime = 30))
+        repo.insert(event("beta", packageName = "com.example.beta", title = "Sender A", postTime = 20))
+        val vm = vm()
+        assertTrue(vm.loaded().chats.isEmpty(), "no app selected, no chat list")
+
+        vm.setChatFilter("c1")
+        assertNull((vm.state.value.mode as HistoryMode.Browse).chat, "a chat filter without an app is ignored")
+
+        vm.setAppFilter(pkg)
+        val app = vm.state.first { it.chats.isNotEmpty() }
+        assertEquals(listOf(ChatSummary("c1", "Group one", 2, 50), ChatSummary("Sender A", "Sender A", 1, 30)), app.chats)
+
+        vm.setChatFilter("c1")
+        assertEquals(listOf("g1", "g2"), vm.state.first { (it.mode as? HistoryMode.Browse)?.chat == "c1" }.ids())
+
+        vm.setChatFilter("Sender A")
+        assertEquals(listOf("legacy"), vm.state.first { (it.mode as? HistoryMode.Browse)?.chat == "Sender A" }.ids())
 
         vm.setAppFilter("com.example.beta")
-        assertEquals(listOf("a1", "b1", "a2"), vm.state.first { (it.mode as? HistoryMode.Browse)?.app == null }.ids())
+        val other = vm.state.first { (it.mode as? HistoryMode.Browse)?.app == "com.example.beta" }
+        assertNull((other.mode as HistoryMode.Browse).chat, "a chat belongs to its app")
+        assertEquals(listOf("beta"), other.ids())
+    }
+
+    @Test
+    fun `only this chat on a row jumps to its app and chat and leaves the digest batch`() = runTest {
+        val row = event("h1", held = true, postTime = 1, conversationId = "c1", conversationTitle = "Group one")
+        repo.insert(row)
+        repo.insert(event("h2", held = true, postTime = 2, packageName = "com.example.beta"))
+        repo.insert(event("old", postTime = 0, conversationId = "c1", conversationTitle = "Group one"))
+        repo.markDelivered(listOf("h1", "h2"), deliveredAt = 1_000)
+        signals.digestLink.value = DigestLink(deliveredAt = 1_000)
+        val vm = vm()
+        assertEquals(listOf("h2", "h1"), vm.loaded().ids())
+
+        vm.showChat(row)
+
+        val s = vm.state.first { it.mode is HistoryMode.Browse }
+        assertEquals(HistoryMode.Browse(app = "com.example.alpha", chat = "c1"), s.mode)
+        assertEquals(listOf("h1", "old"), s.ids())
+        assertNull(signals.digestLink.value)
+
+        vm.showApp(event("x", packageName = "com.example.beta"))
+        assertEquals(listOf("h2"), vm.state.first { (it.mode as? HistoryMode.Browse)?.app == "com.example.beta" }.ids())
+    }
+
+    @Test
+    fun `a tap opens the row, and a failure names the app until dismissed`() = runTest {
+        val row = event("a", appLabel = "Alpha")
+        repo.insert(row)
+        val vm = vm()
+        vm.loaded()
+
+        vm.open(row)
+        assertEquals(listOf("a"), opener.opened)
+        assertNull(vm.state.first { !it.loading }.openFailure)
+
+        opener.result = OpenResult.FAILED
+        vm.open(row)
+        assertEquals("Alpha", vm.state.first { it.openFailure != null }.openFailure)
+
+        vm.dismissOpenFailure()
+        assertNull(vm.state.first { it.openFailure == null }.openFailure)
+
+        opener.originals += "a"
+        assertTrue(vm.opensOriginal(row))
     }
 
     @Test
@@ -192,45 +271,96 @@ class HistoryViewModelTest {
     }
 
     @Test
-    fun `canLoadMore only when the page is full`() = runTest {
-        repo.insert(event("a"))
-        assertTrue(!vm().loaded().canLoadMore)
+    fun `a short list is shown whole, with nothing to unroll`() = runTest {
+        repeat(3) { i -> repo.insert(event("r$i", postTime = 1_000L + i)) }
+
+        val s = vm().loaded()
+
+        assertEquals(3, s.ids().size)
+        assertEquals(3, s.total)
+        assertTrue(!s.collapsed && !s.canLoadMore)
     }
 
     @Test
-    fun `paging counts the raw page so a REMOVED row inside a full page still allows load more`() = runTest {
-        val page = HistoryViewModel.PAGE
-        repeat(page) { i -> repo.insert(event("r$i", postTime = 1_000L + i, event = if (i == 5) EventType.REMOVED else EventType.POSTED)) }
-        repo.insert(event("older", postTime = 1L))
+    fun `first view is the ten newest rows with the total, and REMOVED rows never take a slot`() = runTest {
+        repeat(25) { i ->
+            repo.insert(event("p$i", postTime = 1_000L + 2 * i))
+            repo.insert(event("x$i", postTime = 1_001L + 2 * i, event = EventType.REMOVED))
+        }
 
-        val vm = vm()
-        val first = vm.loaded()
-        assertEquals(page - 1, first.ids().size, "the REMOVED row is hidden")
-        assertTrue(first.canLoadMore, "but the page was full, so more may exist")
+        val s = vm().loaded()
 
-        vm.loadMore()
-
-        val second = vm.state.first { it.ids().size > page - 1 }
-        assertEquals(page, second.ids().size)
-        assertEquals("older", second.ids().last())
-        assertTrue(!second.canLoadMore)
+        assertEquals((24 downTo 15).map { "p$it" }, s.ids())
+        assertEquals(25, s.total)
+        assertTrue(s.collapsed, "more rows exist: offer Show all")
+        assertTrue(!s.canLoadMore, "the preview does not page on scroll")
     }
 
     @Test
-    fun `changing mode resets the page size`() = runTest {
+    fun `show all unrolls into the paged list`() = runTest {
         val page = HistoryViewModel.PAGE
-        repeat(page + 1) { i -> repo.insert(event("r$i", postTime = 1_000L + i)) }
+        repeat(page + 15) { i -> repo.insert(event("r$i", postTime = 1_000L + i)) }
         val vm = vm()
-        assertTrue(vm.loaded().canLoadMore)
+        assertEquals(HistoryViewModel.PREVIEW, vm.loaded().ids().size)
 
         vm.loadMore()
-        val grown = vm.state.first { it.ids().size == page + 1 }
-        assertTrue(!grown.canLoadMore)
+        assertEquals(HistoryViewModel.PREVIEW, vm.state.value.ids().size, "load more does nothing while collapsed")
 
-        // Every fixture title starts with "title", so the search matches all rows: back to one page.
+        vm.showAll()
+        val unrolled = vm.state.first { it.ids().size == page }
+        assertTrue(!unrolled.collapsed)
+        assertTrue(unrolled.canLoadMore)
+
+        vm.loadMore()
+        val all = vm.state.first { it.ids().size == page + 15 }
+        assertEquals("r0", all.ids().last())
+        assertTrue(!all.canLoadMore && !all.collapsed)
+    }
+
+    @Test
+    fun `changing the filter goes back to the ten-row preview`() = runTest {
+        repeat(30) { i -> repo.insert(event("r$i", postTime = 1_000L + i)) }
+        val vm = vm()
+        vm.loaded()
+        vm.showAll()
+        assertEquals(30, vm.state.first { it.ids().size == 30 }.total)
+
+        // Every fixture title starts with "title", so the search matches all rows.
         vm.setQuery("title")
+
         val searched = vm.state.first { (it.mode as? HistoryMode.Browse)?.query == "title" }
-        assertEquals(page, searched.ids().size)
-        assertTrue(searched.canLoadMore)
+        assertEquals(HistoryViewModel.PREVIEW, searched.ids().size)
+        assertEquals(30, searched.total)
+        assertTrue(searched.collapsed)
+    }
+
+    @Test
+    fun `a digest batch also starts as a ten-row preview`() = runTest {
+        val ids = (0 until 12).map { "h$it" }
+        ids.forEachIndexed { i, id -> repo.insert(event(id, held = true, postTime = 1L + i)) }
+        repo.markDelivered(ids, deliveredAt = 1_000)
+        signals.digestLink.value = DigestLink(deliveredAt = 1_000)
+        val vm = vm()
+
+        val preview = vm.loaded()
+        assertEquals((11 downTo 2).map { "h$it" }, preview.ids())
+        assertEquals(12, preview.total)
+        assertTrue(preview.collapsed)
+
+        vm.showAll()
+        val all = vm.state.first { it.ids().size == 12 }
+        assertTrue(!all.collapsed && !all.canLoadMore)
+    }
+
+    @Test
+    fun `sheet search matches label or key, ignoring case`() {
+        val items = listOf(
+            SheetItem("com.example.alpha", "Alpha", 3, "com.example.alpha"),
+            SheetItem("com.example.beta", "Beta", 1, "com.example.beta"),
+        )
+        assertEquals(items, filterSheetItems(items, "  "))
+        assertEquals(listOf(items[1]), filterSheetItems(items, "bET"))
+        assertEquals(listOf(items[0]), filterSheetItems(items, "example.al"))
+        assertTrue(filterSheetItems(items, "zzz").isEmpty())
     }
 }
